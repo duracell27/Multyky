@@ -6,7 +6,7 @@ from aiogram.enums import ParseMode
 
 from bot.config import config
 from bot.database import db
-from bot.handlers import common_router
+from bot.handlers import common_router, admin_router, catalog_router
 
 
 async def main():
@@ -30,6 +30,8 @@ async def main():
 
     # Підключення роутерів
     dp.include_router(common_router)
+    dp.include_router(admin_router)
+    dp.include_router(catalog_router)
 
     # Підключення до бази даних
     await db.connect()

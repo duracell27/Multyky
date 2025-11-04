@@ -59,3 +59,24 @@ async def get_all_users() -> list:
 async def get_users_count() -> int:
     """Отримати кількість користувачів"""
     return await db.users.count_documents({})
+
+
+async def update_last_series_added(user_id: int, series_title: str):
+    """Оновити останній доданий серіал для адміна"""
+    await db.users.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "last_series_added": series_title,
+                "last_series_added_at": datetime.utcnow()
+            }
+        }
+    )
+
+
+async def get_last_series_added(user_id: int) -> str:
+    """Отримати назву останнього доданого серіалу адміна"""
+    user = await get_user(user_id)
+    if user:
+        return user.get("last_series_added")
+    return None

@@ -3,7 +3,8 @@
     "allow": [
       "Bash(mkdir:*)",
       "Bash(source venv/bin/activate:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(./venv/bin/python:*)"
     ],
     "deny": [],
     "ask": []
