@@ -28,8 +28,8 @@ async def cmd_catalog(message: Message):
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🎬 Фільми", callback_data="catalog:movies"),
-            InlineKeyboardButton(text="📺 Серіали", callback_data="catalog:series")
+            InlineKeyboardButton(text="🎬 Мультфільми", callback_data="catalog:movies"),
+            InlineKeyboardButton(text="📺 Мультсеріали", callback_data="catalog:series")
         ]
     ])
 
@@ -58,7 +58,7 @@ async def show_movies(callback: CallbackQuery):
         movie_id = str(movie["_id"])
         buttons.append([
             InlineKeyboardButton(
-                text=f"🎬 {movie['title']} ({movie['year']})",
+                text=f"🎬 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
                 callback_data=f"m:{movie_id}"
             )
         ])
@@ -96,7 +96,7 @@ async def show_series(callback: CallbackQuery):
         series_id = str(show["doc_id"])
         buttons.append([
             InlineKeyboardButton(
-                text=f"📺 {show['title']} ({show['year']})",
+                text=f"📺 {show['title']} ({show['year']}) ⭐️ {show['imdb_rating']}",
                 callback_data=f"s:{series_id}"
             )
         ])
@@ -148,7 +148,7 @@ async def show_seasons(callback: CallbackQuery):
 
     # Додаємо кнопку "Назад"
     buttons.append([
-        InlineKeyboardButton(text="◀️ Назад до серіалів", callback_data="catalog:series")
+        InlineKeyboardButton(text="◀️ Назад до мультсеріалів", callback_data="catalog:series")
     ])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -233,8 +233,7 @@ async def send_episode(callback: CallbackQuery, bot: Bot):
     caption = (
         f"📺 <b>{episode['title']}</b>\n"
         f"Сезон {episode['season']}, Серія {episode['episode']}\n\n"
-        f"⭐️ IMDB: {episode['imdb_rating']}\n"
-        f"📅 Рік: {episode['year']}"
+        f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики 🇺🇦 | Мультфільми Українською</a>"
     )
 
     # Відправляємо відео
@@ -264,8 +263,7 @@ async def send_movie(callback: CallbackQuery, bot: Bot):
     # Формуємо підпис
     caption = (
         f"🎬 <b>{movie['title']}</b>\n\n"
-        f"⭐️ IMDB: {movie['imdb_rating']}\n"
-        f"📅 Рік: {movie['year']}"
+        f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики 🇺🇦 | Мультфільми Українською</a>"
     )
 
     # Відправляємо відео
@@ -282,8 +280,8 @@ async def back_to_catalog(callback: CallbackQuery):
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🎬 Фільми", callback_data="catalog:movies"),
-            InlineKeyboardButton(text="📺 Серіали", callback_data="catalog:series")
+            InlineKeyboardButton(text="🎬 Мультфільми", callback_data="catalog:movies"),
+            InlineKeyboardButton(text="📺 Мультсеріали", callback_data="catalog:series")
         ]
     ])
 

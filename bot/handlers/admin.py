@@ -270,8 +270,8 @@ async def process_imdb_rating(message: Message, state: FSMContext):
     # Створюємо кнопки для вибору типу контенту
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🎬 Фільм", callback_data="content_type:movie"),
-            InlineKeyboardButton(text="📺 Серіал", callback_data="content_type:series")
+            InlineKeyboardButton(text="🎬 Мультфільм", callback_data="content_type:movie"),
+            InlineKeyboardButton(text="📺 Мультсеріал", callback_data="content_type:series")
         ]
     ])
 
@@ -293,20 +293,19 @@ async def process_content_type(callback: CallbackQuery, state: FSMContext):
     if content_type == "movie":
         # Для фільму відразу переходимо до завантаження відео
         await callback.message.edit_text(
-            "✅ Тип: <b>Фільм</b>\n\n"
+            "✅ Тип: <b>Мультфільм</b>\n\n"
             "Тепер відправте відео мультфільму:\n\n"
             "⚠️ <b>Важливо:</b>\n"
             "• Приймаються тільки <b>MP4</b> файли\n"
-            "• Максимальний розмір: 50MB\n"
-            "• Для великих файлів надсилайте БЕЗ 'Send as file'\n"
-            "  (Telegram автоматично стисне)\n\n"
-            "<i>Конвертація MKV/AVI → MP4 на комп'ютері перед завантаженням</i>"
+            "• Максимальний розмір: 2GB (надсилайте з галочкою 'Send as file')\n"
+            "• Конвертуйте MKV/AVI → MP4 на комп'ютері перед завантаженням\n\n"
+            "<i>Для скасування введіть /cancel</i>"
         )
         await state.set_state(AddMovieStates.waiting_for_video)
     else:
         # Для серіалу питаємо номер сезону
         await callback.message.edit_text(
-            "✅ Тип: <b>Серіал</b>\n\n"
+            "✅ Тип: <b>Мультсеріал</b>\n\n"
             "Введіть номер сезону (наприклад: 1):"
         )
         await state.set_state(AddMovieStates.waiting_for_season)
@@ -364,10 +363,9 @@ async def process_episode(message: Message, state: FSMContext):
         "Тепер відправте відео серії:\n\n"
         "⚠️ <b>Важливо:</b>\n"
         "• Приймаються тільки <b>MP4</b> файли\n"
-        "• Максимальний розмір: 50MB\n"
-        "• Для великих файлів надсилайте БЕЗ 'Send as file'\n"
-        "  (Telegram автоматично стисне)\n\n"
-        "<i>Конвертація MKV/AVI → MP4 на комп'ютері перед завантаженням</i>"
+        "• Максимальний розмір: 2GB (надсилайте з галочкою 'Send as file')\n"
+        "• Конвертуйте MKV/AVI → MP4 на комп'ютері перед завантаженням\n\n"
+        "<i>Для скасування введіть /cancel</i>"
     )
     await state.set_state(AddMovieStates.waiting_for_video)
 
@@ -382,59 +380,45 @@ async def process_video(message: Message, state: FSMContext, bot: Bot):
     # Отримуємо file_id відео (може бути video або document)
     video_file_id = None
     video_type = None
-    file_size = 0
     file_name = None
 
     if message.video:
         # Відео надіслано як відео (стиснуте Telegram)
         video_file_id = message.video.file_id
         video_type = "video"
-        file_size = message.video.file_size or 0
         file_name = message.video.file_name or "video.mp4"
 
     elif message.document:
         # Відео надіслано як документ
         mime_type = message.document.mime_type or ""
         file_name = message.document.file_name or ""
-        file_size = message.document.file_size or 0
 
-        # Перевіряємо що це MP4 файл
-        if not (file_name.lower().endswith('.mp4') or mime_type == "video/mp4"):
+        # Перевіряємо що це відео файл
+        is_video = (
+            mime_type.startswith("video/") or
+            file_name.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))
+        )
+
+        if not is_video:
             await message.answer(
-                "❌ <b>Неправильний формат файлу</b>\n\n"
-                "Приймаються тільки <b>MP4</b> файли.\n\n"
-                f"📁 Ваш файл: {file_name}\n\n"
-                "<b>Як виправити:</b>\n"
-                "1️⃣ Конвертуйте відео в MP4 на комп'ютері\n"
-                "   (HandBrake, FFmpeg, або інші програми)\n"
-                "2️⃣ Або надішліть відео БЕЗ галочки 'Send as file'\n"
-                "   (Telegram автоматично стисне в MP4)\n\n"
+                "❌ Будь ласка, відправте відео файл.\n\n"
                 "<i>Для скасування введіть /cancel</i>"
             )
             return
+
+        # Попереджуємо якщо не MP4
+        if not (file_name.lower().endswith('.mp4') or mime_type == "video/mp4"):
+            await message.answer(
+                f"⚠️ <b>Увага!</b> Файл {file_name} не в MP4 форматі.\n\n"
+                f"Рекомендується конвертувати в MP4 для кращої сумісності.\n"
+                f"Продовжую збереження..."
+            )
 
         video_file_id = message.document.file_id
         video_type = "document"
 
     else:
         await message.answer("❌ Будь ласка, відправте відео файл.")
-        return
-
-    # Перевіряємо розмір файлу (Bot API ліміт: 50MB)
-    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB в байтах
-    if file_size > MAX_FILE_SIZE:
-        file_size_mb = file_size / (1024 * 1024)
-        await message.answer(
-            f"❌ <b>Файл завеликий для Bot API</b>\n\n"
-            f"📊 Розмір файлу: {file_size_mb:.1f} MB\n"
-            f"📏 Максимальний розмір: 50 MB\n\n"
-            f"<b>Як виправити:</b>\n"
-            f"1️⃣ Стисніть відео до <50MB у форматі MP4\n"
-            f"   (HandBrake - найкращий вибір для стиснення)\n"
-            f"2️⃣ Або надішліть відео через Telegram БЕЗ галочки 'Send as file'\n"
-            f"   (Telegram автоматично стисне відео)\n\n"
-            f"<i>Для скасування введіть /cancel</i>"
-        )
         return
 
     try:
@@ -468,17 +452,17 @@ async def process_video(message: Message, state: FSMContext, bot: Bot):
                 f"🌍 Назва (EN): {data['title_en']}\n"
                 f"📅 Рік: {data['year']}\n"
                 f"⭐️ IMDB: {data['imdb_rating']}\n"
-                f"🎬 Тип: Фільм\n"
+                f"🎬 Тип: Мультфільм\n"
                 f"📊 Всього записів у базі: {total_movies}"
             )
         else:
             success_message = (
-                "✅ <b>Серію серіалу успішно додано!</b>\n\n"
+                "✅ <b>Серію мультсеріалу успішно додано!</b>\n\n"
                 f"📝 Назва: {data['title']}\n"
                 f"🌍 Назва (EN): {data['title_en']}\n"
                 f"📅 Рік: {data['year']}\n"
                 f"⭐️ IMDB: {data['imdb_rating']}\n"
-                f"📺 Тип: Серіал\n"
+                f"📺 Тип: Мультсеріал\n"
                 f"🎯 Сезон: {season}, Серія: {episode}\n"
                 f"📊 Всього записів у базі: {total_movies}"
             )
@@ -487,7 +471,28 @@ async def process_video(message: Message, state: FSMContext, bot: Bot):
         if content_type == "series":
             await update_last_series_added(message.from_user.id, data["title"])
 
-        await message.answer(success_message)
+        # Для серіалів показуємо кнопки швидкого додавання
+        if content_type == "series":
+            # Створюємо кнопки
+            next_episode = episode + 1
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=f"➕ Наступна серія (S{season:02d}E{next_episode:02d})",
+                    callback_data=f"next_ep:{season}:{next_episode}"
+                )],
+                [InlineKeyboardButton(
+                    text="🔄 Інший сезон",
+                    callback_data="other_season"
+                )],
+                [InlineKeyboardButton(
+                    text="🏠 Головне меню",
+                    callback_data="main_menu"
+                )]
+            ])
+
+            await message.answer(success_message, reply_markup=keyboard)
+        else:
+            await message.answer(success_message)
 
     except Exception as e:
         await message.answer(
@@ -505,3 +510,98 @@ async def process_invalid_video(message: Message, state: FSMContext):
         "❌ Будь ласка, відправте відео файл.\n\n"
         "Якщо хочете скасувати, введіть /cancel"
     )
+
+
+@router.callback_query(F.data.startswith("next_ep:"))
+async def process_next_episode(callback: CallbackQuery, state: FSMContext):
+    """Обробка швидкого додавання наступної серії"""
+    # Парсимо дані: next_ep:1:2 -> сезон 1, серія 2
+    parts = callback.data.split(":")
+    season = int(parts[1])
+    episode = int(parts[2])
+
+    # Отримуємо дані останнього серіалу
+    last_series = await get_last_series_added(callback.from_user.id)
+
+    if not last_series:
+        await callback.answer("❌ Не знайдено останній серіал", show_alert=True)
+        return
+
+    # Отримуємо інформацію про серіал
+    from bot.database.movies import get_series_info_by_title
+    series_info = await get_series_info_by_title(last_series)
+
+    if not series_info:
+        await callback.answer("❌ Серіал не знайдено в базі", show_alert=True)
+        return
+
+    # Зберігаємо всі дані в state
+    await state.update_data(
+        title=series_info["title"],
+        title_en=series_info["title_en"],
+        year=series_info["year"],
+        imdb_rating=series_info["imdb_rating"],
+        content_type="series",
+        season=season,
+        episode=episode
+    )
+
+    await callback.message.edit_text(
+        f"📺 <b>{last_series}</b>\n"
+        f"🎯 Сезон {season}, Серія {episode}\n\n"
+        "Тепер відправте відео серії:\n\n"
+        "⚠️ <b>Важливо:</b>\n"
+        "• Приймаються тільки <b>MP4</b> файли\n"
+        "• Максимальний розмір: 2GB (надсилайте з галочкою 'Send as file')\n"
+        "• Конвертуйте MKV/AVI → MP4 на комп'ютері перед завантаженням\n\n"
+        "<i>Для скасування введіть /cancel</i>"
+    )
+    await state.set_state(AddMovieStates.waiting_for_video)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "other_season")
+async def process_other_season(callback: CallbackQuery, state: FSMContext):
+    """Обробка додавання серії до іншого сезону"""
+    # Отримуємо дані останнього серіалу
+    last_series = await get_last_series_added(callback.from_user.id)
+
+    if not last_series:
+        await callback.answer("❌ Не знайдено останній серіал", show_alert=True)
+        return
+
+    # Отримуємо інформацію про серіал
+    from bot.database.movies import get_series_info_by_title
+    series_info = await get_series_info_by_title(last_series)
+
+    if not series_info:
+        await callback.answer("❌ Серіал не знайдено в базі", show_alert=True)
+        return
+
+    # Зберігаємо основні дані в state
+    await state.update_data(
+        title=series_info["title"],
+        title_en=series_info["title_en"],
+        year=series_info["year"],
+        imdb_rating=series_info["imdb_rating"],
+        content_type="series"
+    )
+
+    await callback.message.edit_text(
+        f"📺 <b>{last_series}</b>\n\n"
+        "Введіть номер сезону (наприклад: 2):"
+    )
+    await state.set_state(AddMovieStates.waiting_for_season)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "main_menu")
+async def process_main_menu(callback: CallbackQuery, state: FSMContext):
+    """Повернення до головного меню"""
+    await state.clear()
+    await callback.message.edit_text(
+        "✅ Повернення до головного меню.\n\n"
+        "🎬 /catalog - переглянути каталог\n"
+        "➕ /addMovie - додати новий контент"
+    )
+    await callback.answer()

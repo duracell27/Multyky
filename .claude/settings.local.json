@@ -4,7 +4,8 @@
       "Bash(mkdir:*)",
       "Bash(source venv/bin/activate:*)",
       "Bash(python:*)",
-      "Bash(./venv/bin/python:*)"
+      "Bash(./venv/bin/python:*)",
+      "Bash(python3 -m py_compile:*)"
     ],
     "deny": [],
     "ask": []
