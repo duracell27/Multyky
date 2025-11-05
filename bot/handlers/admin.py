@@ -421,6 +421,44 @@ async def process_video(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❌ Будь ласка, відправте відео файл.")
         return
 
+    # Відправляємо відео в канал для постійного зберігання
+    if config.STORAGE_CHANNEL_ID:
+        try:
+            status_msg = await message.answer("⏳ Зберігаю відео в канал...")
+
+            # Формуємо підпис для відео
+            content_type = data.get("content_type", "movie")
+            season = data.get("season")
+            episode = data.get("episode")
+
+            if content_type == "series" and season and episode:
+                caption = f"📺 {data['title']}\nS{season:02d}E{episode:02d}"
+            else:
+                caption = f"🎬 {data['title']}"
+
+            if video_type == "video":
+                sent_msg = await bot.send_video(
+                    chat_id=config.STORAGE_CHANNEL_ID,
+                    video=video_file_id,
+                    caption=caption
+                )
+                # Отримуємо file_id з каналу (він стане постійним)
+                video_file_id = sent_msg.video.file_id
+            elif video_type == "document":
+                sent_msg = await bot.send_document(
+                    chat_id=config.STORAGE_CHANNEL_ID,
+                    document=video_file_id,
+                    caption=caption
+                )
+                video_file_id = sent_msg.document.file_id
+
+            await status_msg.delete()
+        except Exception as e:
+            await message.answer(
+                f"⚠️ <b>Помилка при збереженні в канал:</b>\n{str(e)}\n\n"
+                f"Продовжую з поточним file_id..."
+            )
+
     try:
         # Підготовка параметрів для збереження
         content_type = data.get("content_type", "movie")
@@ -890,6 +928,33 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
     else:
         await message.answer("❌ Будь ласка, надішліть відео файл.")
         return
+
+    # Відправляємо відео в канал для постійного зберігання
+    if config.STORAGE_CHANNEL_ID:
+        try:
+            # Формуємо підпис для відео
+            current_episode = start_episode + len(uploaded_videos)
+            caption = f"📺 {data.get('title')}\nS{data.get('season'):02d}E{current_episode:02d}"
+
+            if video_type == "video":
+                sent_msg = await bot.send_video(
+                    chat_id=config.STORAGE_CHANNEL_ID,
+                    video=video_file_id,
+                    caption=caption
+                )
+                # Отримуємо file_id з каналу (він стане постійним)
+                video_file_id = sent_msg.video.file_id
+            elif video_type == "document":
+                sent_msg = await bot.send_document(
+                    chat_id=config.STORAGE_CHANNEL_ID,
+                    document=video_file_id,
+                    caption=caption
+                )
+                video_file_id = sent_msg.document.file_id
+        except Exception as e:
+            await message.answer(
+                f"⚠️ Помилка при збереженні відео {len(uploaded_videos) + 1} в канал: {str(e)}"
+            )
 
     # Додаємо відео в список
     uploaded_videos.append({

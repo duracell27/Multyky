@@ -22,6 +22,9 @@ class Config:
         if admin_id.strip()
     ]
 
+    # Канал для зберігання відео
+    STORAGE_CHANNEL_ID = int(os.getenv("STORAGE_CHANNEL_ID", "0"))
+
     @classmethod
     def validate(cls):
         """Перевірка наявності обов'язкових налаштувань"""

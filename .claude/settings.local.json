@@ -5,7 +5,11 @@
       "Bash(source venv/bin/activate:*)",
       "Bash(python:*)",
       "Bash(./venv/bin/python:*)",
-      "Bash(python3 -m py_compile:*)"
+      "Bash(python3 -m py_compile:*)",
+      "Bash(awk:*)",
+      "Bash(xargs:*)",
+      "Bash(killall:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []
