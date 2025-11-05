@@ -933,12 +933,16 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
         return
 
     # Відправляємо відео в канал для постійного зберігання
+    import logging
+    logging.info(f"STORAGE_CHANNEL_ID: {config.STORAGE_CHANNEL_ID}")
+
     if config.STORAGE_CHANNEL_ID:
         try:
             # Формуємо підпис для відео
             current_episode = start_episode + len(uploaded_videos)
             caption = f"📺 {data.get('title')}\nS{data.get('season'):02d}E{current_episode:02d}"
 
+            logging.info(f"Sending video {len(uploaded_videos) + 1} to channel with caption: {caption}")
             status_msg = await message.answer(f"⏳ Зберігаю відео {len(uploaded_videos) + 1} в канал...")
 
             if video_type == "video":
@@ -949,6 +953,7 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
                 )
                 # Отримуємо file_id з каналу (він стане постійним)
                 video_file_id = sent_msg.video.file_id
+                logging.info(f"Video {len(uploaded_videos) + 1} saved to channel successfully")
             elif video_type == "document":
                 sent_msg = await bot.send_document(
                     chat_id=config.STORAGE_CHANNEL_ID,
@@ -956,12 +961,18 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
                     caption=caption
                 )
                 video_file_id = sent_msg.document.file_id
+                logging.info(f"Document {len(uploaded_videos) + 1} saved to channel successfully")
 
+            await status_msg.edit_text(f"✅ Відео {len(uploaded_videos) + 1} збережено в канал!")
+            await asyncio.sleep(0.5)
             await status_msg.delete()
         except Exception as e:
+            logging.error(f"Error saving video to channel: {str(e)}")
             await message.answer(
                 f"⚠️ Помилка при збереженні відео {len(uploaded_videos) + 1} в канал: {str(e)}"
             )
+    else:
+        logging.warning("STORAGE_CHANNEL_ID is not configured!")
 
     # Додаємо відео в список
     uploaded_videos.append({
