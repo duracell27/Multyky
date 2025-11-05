@@ -4,7 +4,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.states import AddMovieStates
+from bot.states import AddMovieStates, AddBatchMovieStates
 from bot.database.movies import create_movie, get_movies_count, get_all_series_list, get_series_info_by_title
 from bot.database.users import get_last_series_added, update_last_series_added
 
@@ -605,3 +605,351 @@ async def process_main_menu(callback: CallbackQuery, state: FSMContext):
         "➕ /addMovie - додати новий контент"
     )
     await callback.answer()
+
+
+# ===============================================
+# Пакетне додавання серій (Batch Upload)
+# ===============================================
+
+@router.message(Command("addBatchMovie"))
+async def cmd_add_batch_movie(message: Message, state: FSMContext):
+    """Початок процесу пакетного додавання серій"""
+
+    # Перевірка прав адміністратора
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🆕 Новий серіал", callback_data="batch_type:new")],
+        [InlineKeyboardButton(text="📺 Існуючий серіал", callback_data="batch_type:existing")]
+    ])
+
+    await message.answer(
+        "📦 <b>Пакетне додавання серій</b>\n\n"
+        "Ця команда дозволяє додати декілька серій серіалу одразу.\n\n"
+        "Виберіть тип серіалу:\n\n"
+        "<i>Для скасування введіть /cancel</i>",
+        reply_markup=keyboard
+    )
+    await state.set_state(AddBatchMovieStates.choosing_series_type)
+
+
+@router.callback_query(AddBatchMovieStates.choosing_series_type, F.data.startswith("batch_type:"))
+async def process_batch_series_type(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору типу серіалу для пакетного додавання"""
+    series_type = callback.data.split(":", 1)[1]
+
+    if series_type == "new":
+        # Новий серіал - починаємо з назви
+        await callback.message.edit_text(
+            "🆕 <b>Новий серіал</b>\n\n"
+            "Введіть назву українською:\n\n"
+            "<i>Для скасування введіть /cancel</i>"
+        )
+        await state.set_state(AddBatchMovieStates.waiting_for_title)
+
+    elif series_type == "existing":
+        # Показуємо список існуючих серіалів
+        series_list = await get_all_series_list()
+
+        if not series_list:
+            await callback.message.edit_text(
+                "📭 Поки що немає доданих серіалів.\n\n"
+                "Спочатку створіть новий серіал."
+            )
+            await state.clear()
+            await callback.answer()
+            return
+
+        # Створюємо кнопки для вибору серіалу
+        buttons = []
+        for series in series_list:
+            series_id = str(series["doc_id"])
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"📺 {series['title']}",
+                    callback_data=f"batch_sel:{series_id}"
+                )
+            ])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        await callback.message.edit_text(
+            "📺 <b>Виберіть серіал:</b>\n\n"
+            "Оберіть серіал до якого хочете додати серії:",
+            reply_markup=keyboard
+        )
+        await state.set_state(AddBatchMovieStates.choosing_existing_series)
+
+    await callback.answer()
+
+
+@router.callback_query(AddBatchMovieStates.choosing_existing_series, F.data.startswith("batch_sel:"))
+async def process_batch_existing_series(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору існуючого серіалу для пакетного додавання"""
+    series_id = callback.data.split(":", 1)[1]
+
+    # Отримуємо інформацію про серіал
+    series_info = await get_series_info_by_title(series_id)
+
+    if not series_info:
+        await callback.answer("❌ Серіал не знайдено", show_alert=True)
+        await state.clear()
+        return
+
+    # Зберігаємо дані в state
+    await state.update_data(
+        title=series_info["title"],
+        title_en=series_info["title_en"],
+        year=series_info["year"],
+        imdb_rating=series_info["imdb_rating"]
+    )
+
+    await callback.message.edit_text(
+        f"📺 <b>{series_info['title']}</b>\n\n"
+        "Введіть номер сезону (наприклад: 2):"
+    )
+    await state.set_state(AddBatchMovieStates.waiting_for_season)
+    await callback.answer()
+
+
+# Обробники для введення даних нового серіалу
+@router.message(AddBatchMovieStates.waiting_for_title)
+async def process_batch_title(message: Message, state: FSMContext):
+    """Обробка введення назви українською для нового серіалу"""
+    title = message.text.strip()
+
+    if not title:
+        await message.answer("❌ Назва не може бути порожньою. Введіть назву українською:")
+        return
+
+    await state.update_data(title=title)
+    await message.answer(
+        f"✅ Назва українською: <b>{title}</b>\n\n"
+        "Тепер введіть назву англійською:"
+    )
+    await state.set_state(AddBatchMovieStates.waiting_for_title_en)
+
+
+@router.message(AddBatchMovieStates.waiting_for_title_en)
+async def process_batch_title_en(message: Message, state: FSMContext):
+    """Обробка введення назви англійською для нового серіалу"""
+    title_en = message.text.strip()
+
+    if not title_en:
+        await message.answer("❌ Назва не може бути порожньою. Введіть назву англійською:")
+        return
+
+    await state.update_data(title_en=title_en)
+    await message.answer(
+        f"✅ Назва англійською: <b>{title_en}</b>\n\n"
+        "Тепер введіть рік випуску (наприклад: 2020):"
+    )
+    await state.set_state(AddBatchMovieStates.waiting_for_year)
+
+
+@router.message(AddBatchMovieStates.waiting_for_year)
+async def process_batch_year(message: Message, state: FSMContext):
+    """Обробка введення року для нового серіалу"""
+    try:
+        year = int(message.text.strip())
+        if year < 1900 or year > 2100:
+            await message.answer("❌ Некоректний рік. Введіть рік від 1900 до 2100:")
+            return
+    except ValueError:
+        await message.answer("❌ Некоректний формат. Введіть рік числом (наприклад: 2020):")
+        return
+
+    await state.update_data(year=year)
+    await message.answer(
+        f"✅ Рік випуску: <b>{year}</b>\n\n"
+        "Тепер введіть рейтинг IMDB (наприклад: 8.5):"
+    )
+    await state.set_state(AddBatchMovieStates.waiting_for_imdb_rating)
+
+
+@router.message(AddBatchMovieStates.waiting_for_imdb_rating)
+async def process_batch_imdb_rating(message: Message, state: FSMContext):
+    """Обробка введення рейтингу IMDB для нового серіалу"""
+    try:
+        rating = float(message.text.strip())
+        if rating < 0 or rating > 10:
+            await message.answer("❌ Рейтинг має бути від 0 до 10. Спробуйте ще раз:")
+            return
+    except ValueError:
+        await message.answer("❌ Некоректний формат. Введіть число (наприклад: 8.5):")
+        return
+
+    await state.update_data(imdb_rating=rating)
+    await message.answer(
+        f"✅ Рейтинг IMDB: <b>{rating}</b>\n\n"
+        "Тепер введіть номер сезону (наприклад: 1):"
+    )
+    await state.set_state(AddBatchMovieStates.waiting_for_season)
+
+
+@router.message(AddBatchMovieStates.waiting_for_season)
+async def process_batch_season(message: Message, state: FSMContext):
+    """Обробка введення номера сезону"""
+    try:
+        season = int(message.text.strip())
+        if season < 1:
+            await message.answer("❌ Номер сезону має бути більше 0. Спробуйте ще раз:")
+            return
+    except ValueError:
+        await message.answer("❌ Некоректний формат. Введіть число (наприклад: 1):")
+        return
+
+    await state.update_data(season=season)
+    await message.answer(
+        f"✅ Сезон: <b>{season}</b>\n\n"
+        "Тепер введіть діапазон серій через дефіс.\n"
+        "Наприклад: <code>1-5</code> (додасть серії з 1 по 5)\n"
+        "Або: <code>10-15</code> (додасть серії з 10 по 15)"
+    )
+    await state.set_state(AddBatchMovieStates.waiting_for_episode_range)
+
+
+@router.message(AddBatchMovieStates.waiting_for_episode_range)
+async def process_batch_episode_range(message: Message, state: FSMContext):
+    """Обробка введення діапазону серій"""
+    text = message.text.strip()
+
+    # Парсимо діапазон (наприклад "1-5")
+    if "-" not in text:
+        await message.answer(
+            "❌ Некоректний формат. Введіть діапазон через дефіс.\n"
+            "Наприклад: <code>1-5</code> або <code>10-15</code>"
+        )
+        return
+
+    try:
+        start_ep, end_ep = text.split("-", 1)
+        start_episode = int(start_ep.strip())
+        end_episode = int(end_ep.strip())
+
+        if start_episode < 1 or end_episode < 1:
+            await message.answer("❌ Номери серій мають бути більше 0. Спробуйте ще раз:")
+            return
+
+        if start_episode > end_episode:
+            await message.answer("❌ Початковий номер не може бути більше кінцевого. Спробуйте ще раз:")
+            return
+
+        # Обмеження: не більше 20 серій за раз
+        if end_episode - start_episode + 1 > 20:
+            await message.answer("❌ Максимум 20 серій за раз. Спробуйте менший діапазон:")
+            return
+
+    except ValueError:
+        await message.answer(
+            "❌ Некоректний формат. Введіть діапазон через дефіс.\n"
+            "Наприклад: <code>1-5</code> або <code>10-15</code>"
+        )
+        return
+
+    episodes_count = end_episode - start_episode + 1
+
+    await state.update_data(
+        start_episode=start_episode,
+        end_episode=end_episode,
+        episodes_count=episodes_count,
+        uploaded_videos=[]  # Список для зберігання відео
+    )
+
+    data = await state.get_data()
+
+    await message.answer(
+        f"✅ Діапазон серій: <b>{start_episode}-{end_episode}</b> ({episodes_count} серій)\n\n"
+        f"📺 <b>{data.get('title')}</b>\n"
+        f"Сезон {data.get('season')}\n\n"
+        f"Тепер надішліть <b>{episodes_count} відео</b> підряд.\n"
+        f"Вони будуть автоматично пронумеровані від {start_episode} до {end_episode}.\n\n"
+        f"📤 Очікую відео <b>1/{episodes_count}</b>"
+    )
+    await state.set_state(AddBatchMovieStates.waiting_for_videos)
+
+
+@router.message(AddBatchMovieStates.waiting_for_videos, F.video | F.document)
+async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
+    """Обробка відео для пакетного додавання"""
+    data = await state.get_data()
+
+    uploaded_videos = data.get("uploaded_videos", [])
+    episodes_count = data.get("episodes_count")
+    start_episode = data.get("start_episode")
+
+    # Визначаємо тип файлу
+    if message.video:
+        video_file_id = message.video.file_id
+        video_type = "video"
+    elif message.document:
+        video_file_id = message.document.file_id
+        video_type = "document"
+    else:
+        await message.answer("❌ Будь ласка, надішліть відео файл.")
+        return
+
+    # Додаємо відео в список
+    uploaded_videos.append({
+        "file_id": video_file_id,
+        "type": video_type
+    })
+
+    current_count = len(uploaded_videos)
+
+    # Оновлюємо state
+    await state.update_data(uploaded_videos=uploaded_videos)
+
+    # Перевіряємо чи всі відео завантажені
+    if current_count < episodes_count:
+        await message.answer(
+            f"✅ Відео {current_count}/{episodes_count} отримано\n\n"
+            f"📤 Очікую відео <b>{current_count + 1}/{episodes_count}</b>"
+        )
+    else:
+        # Всі відео отримані - зберігаємо в базу
+        await message.answer(
+            f"✅ Всі {episodes_count} відео отримано!\n\n"
+            f"⏳ Зберігаю серії в базу даних..."
+        )
+
+        # Зберігаємо кожну серію
+        saved_count = 0
+        for i, video_data in enumerate(uploaded_videos):
+            episode_number = start_episode + i
+
+            movie_data = {
+                "title": data.get("title"),
+                "title_en": data.get("title_en"),
+                "year": data.get("year"),
+                "imdb_rating": data.get("imdb_rating"),
+                "content_type": "series",
+                "season": data.get("season"),
+                "episode": episode_number,
+                "video_file_id": video_data["file_id"],
+                "video_type": video_data["type"]
+            }
+
+            try:
+                await create_movie(movie_data)
+                saved_count += 1
+            except Exception as e:
+                await message.answer(
+                    f"❌ Помилка при збереженні серії {episode_number}: {str(e)}"
+                )
+
+        # Оновлюємо останній доданий серіал
+        await update_last_series_added(message.from_user.id, data.get("title"))
+
+        await message.answer(
+            f"✅ <b>Успішно додано {saved_count}/{episodes_count} серій!</b>\n\n"
+            f"📺 {data.get('title')}\n"
+            f"Сезон {data.get('season')}, Серії {start_episode}-{data.get('end_episode')}\n\n"
+            f"🎬 /catalog - переглянути каталог\n"
+            f"➕ /addBatchMovie - додати ще серії"
+        )
+
+        # Очищуємо state
+        await state.clear()
