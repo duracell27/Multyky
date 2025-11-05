@@ -920,20 +920,19 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
         for i, video_data in enumerate(uploaded_videos):
             episode_number = start_episode + i
 
-            movie_data = {
-                "title": data.get("title"),
-                "title_en": data.get("title_en"),
-                "year": data.get("year"),
-                "imdb_rating": data.get("imdb_rating"),
-                "content_type": "series",
-                "season": data.get("season"),
-                "episode": episode_number,
-                "video_file_id": video_data["file_id"],
-                "video_type": video_data["type"]
-            }
-
             try:
-                await create_movie(movie_data)
+                await create_movie(
+                    title=data.get("title"),
+                    title_en=data.get("title_en"),
+                    year=data.get("year"),
+                    imdb_rating=data.get("imdb_rating"),
+                    video_file_id=video_data["file_id"],
+                    video_type=video_data["type"],
+                    added_by=message.from_user.id,
+                    content_type="series",
+                    season=data.get("season"),
+                    episode=episode_number
+                )
                 saved_count += 1
             except Exception as e:
                 await message.answer(
