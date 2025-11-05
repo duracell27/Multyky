@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 
 from bot.config import config
 from bot.states import AddMovieStates, AddBatchMovieStates
-from bot.database.movies import create_movie, get_movies_count, get_all_series_list, get_series_info_by_title
+from bot.database.movies import create_movie, get_movies_count, get_all_series_list, get_series_info_by_title, get_movie_by_id
 from bot.database.users import get_last_series_added, update_last_series_added
 
 router = Router()
@@ -690,8 +690,8 @@ async def process_batch_existing_series(callback: CallbackQuery, state: FSMConte
     """Обробка вибору існуючого серіалу для пакетного додавання"""
     series_id = callback.data.split(":", 1)[1]
 
-    # Отримуємо інформацію про серіал
-    series_info = await get_series_info_by_title(series_id)
+    # Отримуємо інформацію про серіал за ID
+    series_info = await get_movie_by_id(series_id)
 
     if not series_info:
         await callback.answer("❌ Серіал не знайдено", show_alert=True)
