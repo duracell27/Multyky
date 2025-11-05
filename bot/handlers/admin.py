@@ -1,3 +1,4 @@
+import asyncio
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
@@ -452,6 +453,8 @@ async def process_video(message: Message, state: FSMContext, bot: Bot):
                 )
                 video_file_id = sent_msg.document.file_id
 
+            await status_msg.edit_text("✅ Відео збережено в канал!")
+            await asyncio.sleep(1)
             await status_msg.delete()
         except Exception as e:
             await message.answer(
@@ -936,6 +939,8 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
             current_episode = start_episode + len(uploaded_videos)
             caption = f"📺 {data.get('title')}\nS{data.get('season'):02d}E{current_episode:02d}"
 
+            status_msg = await message.answer(f"⏳ Зберігаю відео {len(uploaded_videos) + 1} в канал...")
+
             if video_type == "video":
                 sent_msg = await bot.send_video(
                     chat_id=config.STORAGE_CHANNEL_ID,
@@ -951,6 +956,8 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
                     caption=caption
                 )
                 video_file_id = sent_msg.document.file_id
+
+            await status_msg.delete()
         except Exception as e:
             await message.answer(
                 f"⚠️ Помилка при збереженні відео {len(uploaded_videos) + 1} в канал: {str(e)}"
