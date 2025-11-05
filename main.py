@@ -21,6 +21,9 @@ async def main():
     # Перевірка конфігурації
     config.validate()
 
+    # Виводимо список адмінів для перевірки
+    logging.info(f"👑 Admin IDs: {config.ADMIN_IDS}")
+
     # Ініціалізація бота
     bot = Bot(
         token=config.BOT_TOKEN,

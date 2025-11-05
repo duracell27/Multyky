@@ -13,7 +13,7 @@ from bot.database.movies import (
     get_series_info_by_title,
     increment_views
 )
-from bot.database.users import get_or_create_user
+from bot.database.users import get_or_create_user, add_to_watch_history
 from bot.utils import send_movie_video
 
 router = Router()
@@ -229,6 +229,9 @@ async def send_episode(callback: CallbackQuery, bot: Bot):
     # Збільшуємо лічильник переглядів
     await increment_views(episode_id)
 
+    # Додаємо в історію перегляду
+    await add_to_watch_history(callback.from_user.id, episode_id, episode)
+
     # Формуємо підпис
     caption = (
         f"📺 <b>{episode['title']}</b>\n"
@@ -257,8 +260,11 @@ async def send_movie(callback: CallbackQuery, bot: Bot):
         await callback.answer("❌ Фільм не знайдено", show_alert=True)
         return
 
-    # Збільшуємо лічильник переглядів
+    # Збільшуємо лічільник переглядів
     await increment_views(movie_id)
+
+    # Додаємо в історію перегляду
+    await add_to_watch_history(callback.from_user.id, movie_id, movie)
 
     # Формуємо підпис
     caption = (

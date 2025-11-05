@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 
 # Завантаження змінних з .env файлу
-load_dotenv()
+load_dotenv(override=True)
 
 
 class Config:
