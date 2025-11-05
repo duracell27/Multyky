@@ -118,9 +118,11 @@ async def show_series(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("s:"))
 async def show_seasons(callback: CallbackQuery):
-    """Показати сезони серіалу"""
+    """Показати сезони серіалу з пагінацією"""
 
-    series_id = callback.data.split(":", 1)[1]
+    parts = callback.data.split(":")
+    series_id = parts[1]
+    page = int(parts[2]) if len(parts) > 2 else 0
 
     # Отримуємо інформацію про серіал за ID
     series_info = await get_movie_by_id(series_id)
@@ -136,26 +138,54 @@ async def show_seasons(callback: CallbackQuery):
         await callback.answer("❌ Не знайдено сезонів для цього серіалу", show_alert=True)
         return
 
-    # Створюємо кнопки для кожного сезону
+    # Пагінація: 5 сезонів на сторінку
+    SEASONS_PER_PAGE = 5
+    total_pages = (len(seasons) + SEASONS_PER_PAGE - 1) // SEASONS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))  # Обмежуємо page в межах
+
+    start_idx = page * SEASONS_PER_PAGE
+    end_idx = start_idx + SEASONS_PER_PAGE
+    seasons_page = seasons[start_idx:end_idx]
+
+    # Створюємо кнопки для сезонів на поточній сторінці
     buttons = []
-    for season in seasons:
+    for season in seasons_page:
         buttons.append([
             InlineKeyboardButton(
                 text=f"📺 Сезон {season}",
-                callback_data=f"sn:{series_id}:{season}"
+                callback_data=f"sn:{series_id}:{season}:0"
             )
         ])
 
-    # Додаємо кнопку "Назад"
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"s:{series_id}:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"s:{series_id}:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    # Кнопка повернення до списку серіалів
     buttons.append([
         InlineKeyboardButton(text="◀️ Назад до мультсеріалів", callback_data="catalog:series")
     ])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
+    page_info = f"Сторінка {page + 1}/{total_pages}" if total_pages > 1 else ""
+
     await callback.message.edit_text(
         f"📺 <b>{title}</b>\n\n"
-        "Виберіть сезон:",
+        f"Виберіть сезон:\n"
+        f"{page_info}",
         reply_markup=keyboard
     )
     await callback.answer()
@@ -163,11 +193,12 @@ async def show_seasons(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("sn:"))
 async def show_episodes(callback: CallbackQuery):
-    """Показати серії сезону"""
+    """Показати серії сезону з пагінацією"""
 
-    parts = callback.data.split(":", 2)
+    parts = callback.data.split(":")
     series_id = parts[1]
     season = int(parts[2])
+    page = int(parts[3]) if len(parts) > 3 else 0
 
     # Отримуємо інформацію про серіал
     series_info = await get_movie_by_id(series_id)
@@ -183,9 +214,18 @@ async def show_episodes(callback: CallbackQuery):
         await callback.answer("❌ Не знайдено серій для цього сезону", show_alert=True)
         return
 
-    # Створюємо кнопки для кожної серії
+    # Пагінація: 10 серій на сторінку
+    EPISODES_PER_PAGE = 10
+    total_pages = (len(episodes) + EPISODES_PER_PAGE - 1) // EPISODES_PER_PAGE
+    page = max(0, min(page, total_pages - 1))  # Обмежуємо page в межах
+
+    start_idx = page * EPISODES_PER_PAGE
+    end_idx = start_idx + EPISODES_PER_PAGE
+    episodes_page = episodes[start_idx:end_idx]
+
+    # Створюємо кнопки для серій на поточній сторінці
     buttons = []
-    for ep in episodes:
+    for ep in episodes_page:
         ep_id = str(ep["_id"])
         buttons.append([
             InlineKeyboardButton(
@@ -194,20 +234,39 @@ async def show_episodes(callback: CallbackQuery):
             )
         ])
 
-    # Додаємо кнопку "Назад"
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"sn:{series_id}:{season}:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"sn:{series_id}:{season}:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    # Кнопка повернення до списку сезонів
     buttons.append([
         InlineKeyboardButton(
             text="◀️ Назад до сезонів",
-            callback_data=f"s:{series_id}"
+            callback_data=f"s:{series_id}:0"
         )
     ])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
+    page_info = f"Сторінка {page + 1}/{total_pages}" if total_pages > 1 else ""
+
     await callback.message.edit_text(
         f"📺 <b>{title}</b>\n"
         f"Сезон {season}\n\n"
-        "Виберіть серію:",
+        f"Виберіть серію:\n"
+        f"{page_info}",
         reply_markup=keyboard
     )
     await callback.answer()
@@ -226,7 +285,7 @@ async def send_episode(callback: CallbackQuery, bot: Bot):
         await callback.answer("❌ Серію не знайдено", show_alert=True)
         return
 
-    # Збільшуємо лічильник переглядів
+    # Збільшуємо лічільник переглядів
     await increment_views(episode_id)
 
     # Додаємо в історію перегляду
@@ -241,7 +300,59 @@ async def send_episode(callback: CallbackQuery, bot: Bot):
 
     # Відправляємо відео
     try:
-        await send_movie_video(bot, callback.from_user.id, episode, caption)
+        sent_message = await send_movie_video(bot, callback.from_user.id, episode, caption)
+
+        # Шукаємо наступну серію
+        title = episode['title']
+        current_season = episode['season']
+        current_episode = episode['episode']
+
+        # Спробуємо знайти наступну серію в поточному сезоні
+        all_episodes = await get_series_episodes(title, current_season)
+        next_episode_in_season = None
+
+        for ep in all_episodes:
+            if ep['episode'] == current_episode + 1:
+                next_episode_in_season = ep
+                break
+
+        # Створюємо кнопку для наступної серії
+        buttons = []
+        if next_episode_in_season:
+            # Є наступна серія в поточному сезоні
+            next_ep_id = str(next_episode_in_season["_id"])
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"▶️ Наступна серія {current_episode + 1}",
+                    callback_data=f"e:{next_ep_id}"
+                )
+            ])
+        else:
+            # Перевіряємо чи є наступний сезон
+            all_seasons = await get_series_seasons(title)
+            if current_season + 1 in all_seasons:
+                # Є наступний сезон, шукаємо першу серію
+                next_season_episodes = await get_series_episodes(title, current_season + 1)
+                if next_season_episodes:
+                    first_episode = next_season_episodes[0]
+                    first_ep_id = str(first_episode["_id"])
+                    buttons.append([
+                        InlineKeyboardButton(
+                            text=f"▶️ Сезон {current_season + 1}, Серія 1",
+                            callback_data=f"e:{first_ep_id}"
+                        )
+                    ])
+
+        # Якщо є кнопка наступної серії - редагуємо повідомлення
+        if buttons:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+            await bot.edit_message_caption(
+                chat_id=callback.from_user.id,
+                message_id=sent_message.message_id,
+                caption=caption,
+                reply_markup=keyboard
+            )
+
         await callback.answer("✅ Приємного перегляду!")
     except Exception as e:
         await callback.answer(f"❌ Помилка при відправці відео: {str(e)}", show_alert=True)
