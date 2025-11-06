@@ -61,6 +61,19 @@ async def get_users_count() -> int:
     return await db.users.count_documents({})
 
 
+async def get_active_users_count(days: int = 7) -> int:
+    """Отримати кількість активних користувачів за останні N днів"""
+    from datetime import datetime, timedelta
+
+    # Вираховуємо дату N днів тому
+    date_threshold = datetime.utcnow() - timedelta(days=days)
+
+    # Підраховуємо користувачів, які були активні після цієї дати
+    return await db.users.count_documents({
+        "last_activity": {"$gte": date_threshold}
+    })
+
+
 async def update_last_series_added(user_id: int, series_title: str):
     """Оновити останній доданий серіал для адміна"""
     await db.users.update_one(
@@ -119,3 +132,38 @@ async def get_watch_history(user_id: int) -> list:
         # Повертаємо в зворотньому порядку (останні перегляди першими)
         return list(reversed(user["watch_history"]))
     return []
+
+
+async def add_to_watch_later(user_id: int, series_id: str) -> bool:
+    """Додати серіал в чергу перегляду"""
+    result = await db.users.update_one(
+        {"user_id": user_id},
+        {"$addToSet": {"watch_later": series_id}},  # $addToSet не додає дублікати
+        upsert=True
+    )
+    return result.modified_count > 0 or result.upserted_id is not None
+
+
+async def remove_from_watch_later(user_id: int, series_id: str) -> bool:
+    """Видалити серіал з черги перегляду"""
+    result = await db.users.update_one(
+        {"user_id": user_id},
+        {"$pull": {"watch_later": series_id}}
+    )
+    return result.modified_count > 0
+
+
+async def get_watch_later(user_id: int) -> list:
+    """Отримати чергу перегляду користувача"""
+    user = await get_user(user_id)
+    if user and "watch_later" in user:
+        return user["watch_later"]
+    return []
+
+
+async def is_in_watch_later(user_id: int, series_id: str) -> bool:
+    """Перевірити чи серіал в черзі перегляду"""
+    user = await get_user(user_id)
+    if user and "watch_later" in user:
+        return series_id in user["watch_later"]
+    return False

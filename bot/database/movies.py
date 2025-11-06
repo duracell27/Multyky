@@ -129,6 +129,55 @@ async def get_movies_count() -> int:
     return await db.videos.count_documents({})
 
 
+async def get_movies_only_count() -> int:
+    """Отримати кількість тільки фільмів"""
+    return await db.videos.count_documents({"content_type": "movie"})
+
+
+async def get_series_only_count() -> int:
+    """Отримати кількість тільки серіалів"""
+    return await db.videos.count_documents({"content_type": "series"})
+
+
+async def get_total_episodes_count() -> int:
+    """Отримати загальну кількість епізодів у всіх серіалах"""
+    series_list = await db.videos.find({"content_type": "series"}).to_list(length=None)
+
+    total_episodes = 0
+    for series in series_list:
+        if "seasons" in series:
+            for season_num, episodes in series["seasons"].items():
+                total_episodes += len(episodes)
+
+    return total_episodes
+
+
+async def get_total_videos_count() -> int:
+    """Отримати загальну кількість відео (фільми + епізоди)"""
+    movies_count = await get_movies_only_count()
+    episodes_count = await get_total_episodes_count()
+    return movies_count + episodes_count
+
+
+async def get_total_views_count() -> int:
+    """Отримати загальну кількість переглядів всіх відео"""
+    # Використовуємо агрегацію для підсумовування views_count
+    pipeline = [
+        {
+            "$group": {
+                "_id": None,
+                "total_views": {"$sum": "$views_count"}
+            }
+        }
+    ]
+
+    result = await db.videos.aggregate(pipeline).to_list(length=1)
+
+    if result:
+        return result[0].get("total_views", 0)
+    return 0
+
+
 async def get_all_movies_list() -> list:
     """Отримати список всіх фільмів"""
     cursor = db.videos.find({"content_type": "movie"}).sort("title", 1)
@@ -289,3 +338,123 @@ async def get_series_episodes(title: str, season: int = None) -> list:
     # Сортуємо по сезону і серії
     episodes.sort(key=lambda x: (x["season"], x["episode"]))
     return episodes
+
+
+async def toggle_like(series_id: str, user_id: int) -> dict:
+    """
+    Перемикач лайка для серіалу
+    Якщо користувач вже лайкнув - видаляє лайк
+    Якщо користувач дизлайкнув - переключає на лайк
+    Якщо не голосував - додає лайк
+
+    Returns: {"action": "added"/"removed", "rating": new_rating}
+    """
+    from bson import ObjectId
+
+    series = await get_movie_by_id(series_id)
+    if not series:
+        return None
+
+    likes = series.get("likes", [])
+    dislikes = series.get("dislikes", [])
+
+    action = None
+
+    if user_id in likes:
+        # Користувач вже лайкнув - видаляємо лайк
+        likes.remove(user_id)
+        action = "removed"
+    else:
+        # Видаляємо дизлайк якщо є
+        if user_id in dislikes:
+            dislikes.remove(user_id)
+        # Додаємо лайк
+        likes.append(user_id)
+        action = "added"
+
+    # Оновлюємо рейтинг
+    rating = len(likes) - len(dislikes)
+
+    # Зберігаємо в базу
+    await db.videos.update_one(
+        {"_id": ObjectId(series_id)},
+        {
+            "$set": {
+                "likes": likes,
+                "dislikes": dislikes,
+                "rating": rating
+            }
+        }
+    )
+
+    return {"action": action, "rating": rating}
+
+
+async def toggle_dislike(series_id: str, user_id: int) -> dict:
+    """
+    Перемикач дизлайка для серіалу
+    Якщо користувач вже дизлайкнув - видаляє дизлайк
+    Якщо користувач лайкнув - переключає на дизлайк
+    Якщо не голосував - додає дизлайк
+
+    Returns: {"action": "added"/"removed", "rating": new_rating}
+    """
+    from bson import ObjectId
+
+    series = await get_movie_by_id(series_id)
+    if not series:
+        return None
+
+    likes = series.get("likes", [])
+    dislikes = series.get("dislikes", [])
+
+    action = None
+
+    if user_id in dislikes:
+        # Користувач вже дизлайкнув - видаляємо дизлайк
+        dislikes.remove(user_id)
+        action = "removed"
+    else:
+        # Видаляємо лайк якщо є
+        if user_id in likes:
+            likes.remove(user_id)
+        # Додаємо дизлайк
+        dislikes.append(user_id)
+        action = "added"
+
+    # Оновлюємо рейтинг
+    rating = len(likes) - len(dislikes)
+
+    # Зберігаємо в базу
+    await db.videos.update_one(
+        {"_id": ObjectId(series_id)},
+        {
+            "$set": {
+                "likes": likes,
+                "dislikes": dislikes,
+                "rating": rating
+            }
+        }
+    )
+
+    return {"action": action, "rating": rating}
+
+
+async def get_user_vote(series_id: str, user_id: int) -> str:
+    """
+    Отримати голос користувача
+    Returns: "like", "dislike", або None
+    """
+    series = await get_movie_by_id(series_id)
+    if not series:
+        return None
+
+    likes = series.get("likes", [])
+    dislikes = series.get("dislikes", [])
+
+    if user_id in likes:
+        return "like"
+    elif user_id in dislikes:
+        return "dislike"
+    else:
+        return None

@@ -2,8 +2,21 @@ from aiogram import Router
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.database.users import get_or_create_user, get_users_count, get_watch_history
-from bot.database.movies import get_movies_count
+from bot.database.users import (
+    get_or_create_user,
+    get_users_count,
+    get_active_users_count,
+    get_watch_history,
+    get_watch_later
+)
+from bot.database.movies import (
+    get_movies_count,
+    get_movie_by_id,
+    get_movies_only_count,
+    get_series_only_count,
+    get_total_videos_count,
+    get_total_views_count
+)
 from bot.config import config
 
 router = Router()
@@ -55,10 +68,10 @@ async def cmd_menu(message: Message):
             "🎬 <b>Команди користувача:</b>\n"
             "/catalog - Каталог мультфільмів і серіалів\n"
             "/history - Історія переглядів\n"
+            "/watchLater - Переглянути пізніше\n"
             "/menu - Показати це меню\n\n"
             "⚙️ <b>Команди адміністратора:</b>\n"
-            "/addMovie - Додати новий мультфільм або серіал\n"
-            "/addBatchMovie - Пакетне додавання серій (5-20 серій)\n"
+            "/addBatchMovie - Додавання серій серіалу\n"
             "/stats - Статистика бота\n"
             "/cancel - Скасувати поточну дію\n\n"
             "💡 <i>Приємної роботи!</i>"
@@ -70,6 +83,7 @@ async def cmd_menu(message: Message):
             "📺 <b>Доступні команди:</b>\n\n"
             "/catalog - Каталог мультфільмів і серіалів\n"
             "/history - Історія переглядів\n"
+            "/watchLater - Переглянути пізніше\n"
             "/menu - Показати це меню\n\n"
             "📝 <i>Приємного перегляду!</i>"
         )
@@ -88,12 +102,23 @@ async def cmd_stats(message: Message):
 
     # Отримуємо статистику
     users_count = await get_users_count()
-    movies_count = await get_movies_count()
+    active_users_count = await get_active_users_count(days=7)
+    movies_only_count = await get_movies_only_count()
+    series_only_count = await get_series_only_count()
+    total_videos_count = await get_total_videos_count()
+    total_views_count = await get_total_views_count()
 
     stats_text = (
         "📊 <b>Статистика бота:</b>\n\n"
-        f"👥 Користувачів: {users_count}\n"
-        f"🎬 Мультфільмів: {movies_count}\n\n"
+        "👥 <b>Користувачі:</b>\n"
+        f"   • Всього: {users_count}\n"
+        f"   • Активних (7 днів): {active_users_count}\n\n"
+        "🎬 <b>Контент:</b>\n"
+        f"   • Мультфільмів: {movies_only_count}\n"
+        f"   • Мультсеріалів: {series_only_count}\n"
+        f"   • Всього відео: {total_videos_count}\n\n"
+        "📊 <b>Перегляди:</b>\n"
+        f"   • Всього переглядів: {total_views_count}\n\n"
         f"<i>Статистика оновлюється в реальному часі</i>"
     )
 
@@ -144,5 +169,57 @@ async def cmd_history(message: Message):
         "📜 <b>Історія переглядів</b>\n\n"
         f"Останні {len(buttons)} переглянутих:\n"
         "Натисни щоб переглянути знову 👇",
+        reply_markup=keyboard
+    )
+
+
+@router.message(Command("watchLater"))
+async def cmd_watch_later(message: Message):
+    """Обробник команди /watchLater - показати чергу перегляду"""
+
+    # Автоматично оновлюємо активність
+    await get_or_create_user(message.from_user)
+
+    # Отримуємо чергу перегляду
+    watch_later_ids = await get_watch_later(message.from_user.id)
+
+    if not watch_later_ids:
+        await message.answer(
+            "📭 <b>Черга перегляду порожня</b>\n\n"
+            "Додай серіали з /catalog і вони з'являться тут!"
+        )
+        return
+
+    # Формуємо кнопки для кожного серіалу
+    buttons = []
+    for series_id in watch_later_ids:
+        # Отримуємо інформацію про серіал
+        series_info = await get_movie_by_id(series_id)
+        if not series_info:
+            continue
+
+        title = series_info.get("title", "Невідомо")
+
+        # Створюємо кнопку з посиланням на серіал
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📺 {title}",
+                callback_data=f"s:{series_id}"
+            )
+        ])
+
+    if not buttons:
+        await message.answer(
+            "📭 <b>Черга перегляду порожня</b>\n\n"
+            "Додай серіали з /catalog і вони з'являться тут!"
+        )
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
+        "📌 <b>Черга перегляду</b>\n\n"
+        f"Збережено серіалів: {len(buttons)}\n"
+        "Натисни щоб переглянути 👇",
         reply_markup=keyboard
     )

@@ -11,12 +11,43 @@ from bot.database.movies import (
     get_movie_by_title,
     get_movie_by_id,
     get_series_info_by_title,
-    increment_views
+    increment_views,
+    toggle_like,
+    toggle_dislike,
+    get_user_vote
 )
-from bot.database.users import get_or_create_user, add_to_watch_history
+from bot.database.users import (
+    get_or_create_user,
+    add_to_watch_history,
+    add_to_watch_later,
+    remove_from_watch_later,
+    is_in_watch_later
+)
 from bot.utils import send_movie_video
 
 router = Router()
+
+
+async def create_series_poster_buttons(series_id: str, user_id: int) -> InlineKeyboardMarkup:
+    """Створити кнопки для постера з візуальною індикацією стану"""
+    # Перевіряємо чи користувач лайкнув/дизлайкнув
+    user_vote = await get_user_vote(series_id, user_id)
+
+    # Перевіряємо чи серіал в черзі перегляду
+    in_queue = await is_in_watch_later(user_id, series_id)
+
+    # Формуємо текст кнопок
+    like_text = "👍 ✅" if user_vote == "like" else "👍"
+    dislike_text = "👎 ✅" if user_vote == "dislike" else "👎"
+    watchlater_text = "📌 ✅" if in_queue else "📌"
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=like_text, callback_data=f"like:{series_id}"),
+            InlineKeyboardButton(text=dislike_text, callback_data=f"dislike:{series_id}"),
+            InlineKeyboardButton(text=watchlater_text, callback_data=f"watchlater:{series_id}")
+        ]
+    ])
 
 
 @router.message(Command("catalog"))
@@ -92,8 +123,8 @@ async def show_series(callback: CallbackQuery):
     # Створюємо кнопки для кожного серіалу
     buttons = []
     for show in series:
-        # Використовуємо doc_id який ми додали в агрегації
-        series_id = str(show["doc_id"])
+        # В новій структурі використовуємо _id
+        series_id = str(show["_id"])
         buttons.append([
             InlineKeyboardButton(
                 text=f"📺 {show['title']} ({show['year']}) ⭐️ {show['imdb_rating']}",
@@ -117,7 +148,7 @@ async def show_series(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("s:"))
-async def show_seasons(callback: CallbackQuery):
+async def show_seasons(callback: CallbackQuery, bot: Bot):
     """Показати сезони серіалу з пагінацією"""
 
     parts = callback.data.split(":")
@@ -132,7 +163,7 @@ async def show_seasons(callback: CallbackQuery):
         return
 
     title = series_info["title"]
-    seasons = await get_series_seasons(title)
+    seasons = await get_series_seasons(series_id)
 
     if not seasons:
         await callback.answer("❌ Не знайдено сезонів для цього серіалу", show_alert=True)
@@ -182,12 +213,53 @@ async def show_seasons(callback: CallbackQuery):
 
     page_info = f"Сторінка {page + 1}/{total_pages}" if total_pages > 1 else ""
 
-    await callback.message.edit_text(
-        f"📺 <b>{title}</b>\n\n"
-        f"Виберіть сезон:\n"
-        f"{page_info}",
-        reply_markup=keyboard
-    )
+    # Якщо це перший вхід (page == 0), відправляємо постер окремо, а кнопки в наступному повідомленні
+    if page == 0:
+        rating = series_info.get('rating', 0)
+        views = series_info.get('views_count', 0)
+
+        poster_caption = (
+            f"📺 <b>{series_info['title']}</b>\n\n"
+            f"📅 Рік: {series_info['year']}\n"
+            f"⭐️ IMDB: {series_info['imdb_rating']}\n"
+            f"⭐️ Рейтинг: {rating}\n"
+            f"👁 Перегляди: {views}"
+        )
+
+        try:
+            # Створюємо кнопки для постера з візуальною індикацією стану
+            poster_buttons = await create_series_poster_buttons(series_id, callback.from_user.id)
+
+            # Відправляємо постер з кнопками
+            await bot.send_photo(
+                chat_id=callback.from_user.id,
+                photo=series_info['poster_file_id'],
+                caption=poster_caption,
+                reply_markup=poster_buttons
+            )
+            # Видаляємо старе повідомлення з каталогом
+            await callback.message.delete()
+            # Відправляємо окреме текстове повідомлення з кнопками
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text=f"Виберіть сезон:\n{page_info}" if page_info else "Виберіть сезон:",
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            # Якщо не вдалося відправити постер - показуємо текстом
+            await callback.message.edit_text(
+                f"📺 <b>{title}</b>\n\n"
+                f"Виберіть сезон:\n"
+                f"{page_info}",
+                reply_markup=keyboard
+            )
+    else:
+        # Для інших сторінок просто редагуємо текст
+        await callback.message.edit_text(
+            f"Виберіть сезон:\n{page_info}" if page_info else "Виберіть сезон:",
+            reply_markup=keyboard
+        )
+
     await callback.answer()
 
 
@@ -226,11 +298,11 @@ async def show_episodes(callback: CallbackQuery):
     # Створюємо кнопки для серій на поточній сторінці
     buttons = []
     for ep in episodes_page:
-        ep_id = str(ep["_id"])
+        # В новій структурі передаємо series_id:season:episode
         buttons.append([
             InlineKeyboardButton(
                 text=f"▶️ Серія {ep['episode']}",
-                callback_data=f"e:{ep_id}"
+                callback_data=f"e:{series_id}:{season}:{ep['episode']}"
             )
         ])
 
@@ -262,13 +334,12 @@ async def show_episodes(callback: CallbackQuery):
 
     page_info = f"Сторінка {page + 1}/{total_pages}" if total_pages > 1 else ""
 
-    await callback.message.edit_text(
-        f"📺 <b>{title}</b>\n"
-        f"Сезон {season}\n\n"
-        f"Виберіть серію:\n"
-        f"{page_info}",
-        reply_markup=keyboard
-    )
+    # Редагуємо текстове повідомлення
+    text = f"Сезон {season}\n\nВиберіть серію:"
+    if page_info:
+        text += f"\n{page_info}"
+
+    await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
 
@@ -276,24 +347,33 @@ async def show_episodes(callback: CallbackQuery):
 async def send_episode(callback: CallbackQuery, bot: Bot):
     """Відправити серію користувачу"""
 
-    episode_id = callback.data.split(":", 1)[1]
+    parts = callback.data.split(":")
+    series_id = parts[1]
+    season = int(parts[2])
+    episode_num = int(parts[3])
 
-    # Отримуємо серію за ID
-    episode = await get_movie_by_id(episode_id)
+    # Отримуємо серію
+    episode = await get_episode(series_id, season, episode_num)
 
     if not episode:
         await callback.answer("❌ Серію не знайдено", show_alert=True)
         return
 
-    # Збільшуємо лічільник переглядів
-    await increment_views(episode_id)
+    # Отримуємо інформацію про серіал
+    series_info = await get_movie_by_id(series_id)
+    if not series_info:
+        await callback.answer("❌ Серіал не знайдено", show_alert=True)
+        return
 
-    # Додаємо в історію перегляду
-    await add_to_watch_history(callback.from_user.id, episode_id, episode)
+    # Збільшуємо лічільник переглядів серіалу
+    await increment_views(series_id)
 
-    # Формуємо підпис
+    # Додаємо в історію перегляду (зберігаємо серіал)
+    await add_to_watch_history(callback.from_user.id, series_id, series_info)
+
+    # Формуємо підпис для відео
     caption = (
-        f"📺 <b>{episode['title']}</b>\n"
+        f"📺 <b>{episode['series_title']}</b>\n"
         f"Сезон {episode['season']}, Серія {episode['episode']}\n\n"
         f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики 🇺🇦 | Мультфільми Українською</a>"
     )
@@ -303,43 +383,33 @@ async def send_episode(callback: CallbackQuery, bot: Bot):
         sent_message = await send_movie_video(bot, callback.from_user.id, episode, caption)
 
         # Шукаємо наступну серію
-        title = episode['title']
         current_season = episode['season']
         current_episode = episode['episode']
 
-        # Спробуємо знайти наступну серію в поточному сезоні
-        all_episodes = await get_series_episodes(title, current_season)
-        next_episode_in_season = None
-
-        for ep in all_episodes:
-            if ep['episode'] == current_episode + 1:
-                next_episode_in_season = ep
-                break
+        # Перевіряємо чи є наступна серія в поточному сезоні
+        next_episode = await get_episode(series_id, current_season, current_episode + 1)
 
         # Створюємо кнопку для наступної серії
         buttons = []
-        if next_episode_in_season:
+        if next_episode:
             # Є наступна серія в поточному сезоні
-            next_ep_id = str(next_episode_in_season["_id"])
             buttons.append([
                 InlineKeyboardButton(
                     text=f"▶️ Наступна серія {current_episode + 1}",
-                    callback_data=f"e:{next_ep_id}"
+                    callback_data=f"e:{series_id}:{current_season}:{current_episode + 1}"
                 )
             ])
         else:
             # Перевіряємо чи є наступний сезон
-            all_seasons = await get_series_seasons(title)
+            all_seasons = await get_series_seasons(series_id)
             if current_season + 1 in all_seasons:
-                # Є наступний сезон, шукаємо першу серію
-                next_season_episodes = await get_series_episodes(title, current_season + 1)
-                if next_season_episodes:
-                    first_episode = next_season_episodes[0]
-                    first_ep_id = str(first_episode["_id"])
+                # Перевіряємо чи є перша серія наступного сезону
+                first_episode = await get_episode(series_id, current_season + 1, 1)
+                if first_episode:
                     buttons.append([
                         InlineKeyboardButton(
                             text=f"▶️ Сезон {current_season + 1}, Серія 1",
-                            callback_data=f"e:{first_ep_id}"
+                            callback_data=f"e:{series_id}:{current_season + 1}:1"
                         )
                     ])
 
@@ -377,7 +447,24 @@ async def send_movie(callback: CallbackQuery, bot: Bot):
     # Додаємо в історію перегляду
     await add_to_watch_history(callback.from_user.id, movie_id, movie)
 
-    # Формуємо підпис
+    # Відправляємо постер фільму
+    poster_caption = (
+        f"🎬 <b>{movie['title']}</b>\n"
+        f"📅 Рік: {movie['year']}\n"
+        f"⭐️ IMDB: {movie['imdb_rating']}"
+    )
+
+    try:
+        await bot.send_photo(
+            chat_id=callback.from_user.id,
+            photo=movie['poster_file_id'],
+            caption=poster_caption
+        )
+    except Exception as e:
+        # Якщо не вдалося відправити постер - не критично, продовжуємо
+        pass
+
+    # Формуємо підпис для відео
     caption = (
         f"🎬 <b>{movie['title']}</b>\n\n"
         f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики 🇺🇦 | Мультфільми Українською</a>"
@@ -389,6 +476,129 @@ async def send_movie(callback: CallbackQuery, bot: Bot):
         await callback.answer("✅ Приємного перегляду!")
     except Exception as e:
         await callback.answer(f"❌ Помилка при відправці відео: {str(e)}", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("like:"))
+async def handle_like(callback: CallbackQuery):
+    """Обробка лайка серіалу"""
+    series_id = callback.data.split(":", 1)[1]
+
+    # Перемикаємо лайк
+    result = await toggle_like(series_id, callback.from_user.id)
+
+    if not result:
+        await callback.answer("❌ Помилка при обробці лайка", show_alert=True)
+        return
+
+    # Отримуємо оновлену інформацію про серіал
+    series_info = await get_movie_by_id(series_id)
+    if not series_info:
+        await callback.answer("❌ Серіал не знайдено", show_alert=True)
+        return
+
+    rating = series_info.get('rating', 0)
+    views = series_info.get('views_count', 0)
+
+    # Оновлюємо caption постера
+    new_caption = (
+        f"📺 <b>{series_info['title']}</b>\n\n"
+        f"📅 Рік: {series_info['year']}\n"
+        f"⭐️ IMDB: {series_info['imdb_rating']}\n"
+        f"⭐️ Рейтинг: {rating}\n"
+        f"👁 Перегляди: {views}"
+    )
+
+    # Створюємо оновлені кнопки з візуальною індикацією
+    poster_buttons = await create_series_poster_buttons(series_id, callback.from_user.id)
+
+    # Оновлюємо постер
+    try:
+        await callback.message.edit_caption(
+            caption=new_caption,
+            reply_markup=poster_buttons
+        )
+    except Exception:
+        pass  # Якщо caption не змінився, ігноруємо помилку
+
+    # Показуємо повідомлення користувачу
+    if result["action"] == "added":
+        await callback.answer("👍 Вам сподобалось!")
+    else:
+        await callback.answer("Лайк видалено")
+
+
+@router.callback_query(F.data.startswith("dislike:"))
+async def handle_dislike(callback: CallbackQuery):
+    """Обробка дизлайка серіалу"""
+    series_id = callback.data.split(":", 1)[1]
+
+    # Перемикаємо дизлайк
+    result = await toggle_dislike(series_id, callback.from_user.id)
+
+    if not result:
+        await callback.answer("❌ Помилка при обробці дизлайка", show_alert=True)
+        return
+
+    # Отримуємо оновлену інформацію про серіал
+    series_info = await get_movie_by_id(series_id)
+    if not series_info:
+        await callback.answer("❌ Серіал не знайдено", show_alert=True)
+        return
+
+    rating = series_info.get('rating', 0)
+    views = series_info.get('views_count', 0)
+
+    # Оновлюємо caption постера
+    new_caption = (
+        f"📺 <b>{series_info['title']}</b>\n\n"
+        f"📅 Рік: {series_info['year']}\n"
+        f"⭐️ IMDB: {series_info['imdb_rating']}\n"
+        f"⭐️ Рейтинг: {rating}\n"
+        f"👁 Перегляди: {views}"
+    )
+
+    # Створюємо оновлені кнопки з візуальною індикацією
+    poster_buttons = await create_series_poster_buttons(series_id, callback.from_user.id)
+
+    # Оновлюємо постер
+    try:
+        await callback.message.edit_caption(
+            caption=new_caption,
+            reply_markup=poster_buttons
+        )
+    except Exception:
+        pass  # Якщо caption не змінився, ігноруємо помилку
+
+    # Показуємо повідомлення користувачу
+    if result["action"] == "added":
+        await callback.answer("👎 Вам не сподобалось")
+    else:
+        await callback.answer("Дизлайк видалено")
+
+
+@router.callback_query(F.data.startswith("watchlater:"))
+async def handle_watch_later(callback: CallbackQuery):
+    """Обробка додавання/видалення з черги перегляду"""
+    series_id = callback.data.split(":", 1)[1]
+
+    # Перевіряємо чи серіал вже в черзі
+    in_queue = await is_in_watch_later(callback.from_user.id, series_id)
+
+    if in_queue:
+        # Видаляємо з черги
+        await remove_from_watch_later(callback.from_user.id, series_id)
+        await callback.answer("📌 Видалено з черги перегляду")
+    else:
+        # Додаємо в чергу
+        await add_to_watch_later(callback.from_user.id, series_id)
+        await callback.answer("📌 Додано в чергу перегляду!")
+
+    # Оновлюємо кнопки щоб показати новий стан
+    poster_buttons = await create_series_poster_buttons(series_id, callback.from_user.id)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=poster_buttons)
+    except Exception:
+        pass  # Якщо кнопки не змінились, ігноруємо помилку
 
 
 @router.callback_query(F.data == "catalog:back")
