@@ -368,8 +368,14 @@ async def send_episode(callback: CallbackQuery, bot: Bot):
     # Збільшуємо лічільник переглядів серіалу
     await increment_views(series_id)
 
-    # Додаємо в історію перегляду (зберігаємо серіал)
-    await add_to_watch_history(callback.from_user.id, series_id, series_info)
+    # Додаємо в історію перегляду (зберігаємо епізод з інформацією про сезон)
+    episode_data = {
+        "title": series_info.get("title"),
+        "content_type": "series",
+        "season": episode["season"],
+        "episode": episode["episode"]
+    }
+    await add_to_watch_history(callback.from_user.id, series_id, episode_data)
 
     # Формуємо підпис для відео
     caption = (

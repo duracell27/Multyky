@@ -151,10 +151,17 @@ async def cmd_history(message: Message):
 
         # Формуємо текст кнопки
         if content_type == "series":
-            season = item.get("season", "?")
-            episode = item.get("episode", "?")
-            button_text = f"📺 {title} S{season}E{episode}"
-            callback_data = f"e:{movie_id}"
+            season = item.get("season")
+            episode = item.get("episode")
+
+            # Перевіряємо що season і episode є числами
+            if season is not None and episode is not None:
+                button_text = f"📺 {title} S{season}E{episode}"
+                callback_data = f"e:{movie_id}:{season}:{episode}"
+            else:
+                # Якщо немає інформації про епізод - відкриваємо серіал
+                button_text = f"📺 {title}"
+                callback_data = f"s:{movie_id}"
         else:
             button_text = f"🎬 {title}"
             callback_data = f"m:{movie_id}"
