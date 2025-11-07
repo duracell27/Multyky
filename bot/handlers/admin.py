@@ -10,8 +10,11 @@ from bot.config import config
 from bot.states import AddBatchMovieStates
 from bot.database.movies import (
     add_episode_to_series,
-    get_all_series_list, get_movie_by_id,
-    get_season_episodes, get_episode
+    get_all_series_list,
+    get_movie_by_id,
+    get_season_episodes,
+    get_episode,
+    create_series
 )
 from bot.database.users import update_last_series_added
 
@@ -40,20 +43,25 @@ async def cmd_add_batch_movie(message: Message, state: FSMContext):
     # Отримуємо список серіалів
     series_list = await get_all_series_list()
 
-    if not series_list:
-        await message.answer("❌ У базі даних немає жодного серіалу.\n\nСпочатку створіть серіал.")
-        return
-
     # Створюємо кнопки для вибору серіалу (тільки назва)
     buttons = []
-    for series in series_list:
-        series_id = str(series["_id"])
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"📺 {series['title']}",
-                callback_data=f"sel_series:{series_id}"
-            )
-        ])
+    if series_list:
+        for series in series_list:
+            series_id = str(series["_id"])
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"📺 {series['title']}",
+                    callback_data=f"sel_series:{series_id}"
+                )
+            ])
+
+    # Додаємо кнопку для створення нового серіалу
+    buttons.append([
+        InlineKeyboardButton(
+            text="➕ Створити новий серіал",
+            callback_data="create_new_series"
+        )
+    ])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -110,6 +118,146 @@ async def process_series_selection(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AddBatchMovieStates.waiting_for_season)
     await callback.answer()
 
+
+# ===============================================
+# Створення нового серіалу
+# ===============================================
+
+@router.callback_query(AddBatchMovieStates.choosing_existing_series, F.data == "create_new_series")
+async def start_create_new_series(callback: CallbackQuery, state: FSMContext):
+    """Початок створення нового серіалу"""
+    await callback.message.edit_text(
+        "➕ <b>Створення нового серіалу</b>\n\n"
+        "Введіть українську назву серіалу:"
+    )
+    await state.set_state(AddBatchMovieStates.waiting_for_new_series_title)
+    await callback.answer()
+
+
+@router.message(AddBatchMovieStates.waiting_for_new_series_title, ~F.text.startswith("/"))
+async def process_new_series_title(message: Message, state: FSMContext):
+    """Обробка української назви серіалу"""
+    title = message.text.strip()
+
+    await state.update_data(new_series_title=title)
+    await message.answer(
+        f"✅ Назва: <b>{title}</b>\n\n"
+        "Введіть англійську назву серіалу:"
+    )
+    await state.set_state(AddBatchMovieStates.waiting_for_new_series_title_en)
+
+
+@router.message(AddBatchMovieStates.waiting_for_new_series_title_en, ~F.text.startswith("/"))
+async def process_new_series_title_en(message: Message, state: FSMContext):
+    """Обробка англійської назви серіалу"""
+    title_en = message.text.strip()
+
+    await state.update_data(new_series_title_en=title_en)
+    await message.answer(
+        f"✅ Англійська назва: <b>{title_en}</b>\n\n"
+        "Введіть рік випуску (наприклад: <code>2012</code>):"
+    )
+    await state.set_state(AddBatchMovieStates.waiting_for_new_series_year)
+
+
+@router.message(AddBatchMovieStates.waiting_for_new_series_year, ~F.text.startswith("/"))
+async def process_new_series_year(message: Message, state: FSMContext):
+    """Обробка року випуску"""
+    try:
+        year = int(message.text.strip())
+        if year < 1900 or year > 2100:
+            await message.answer("❌ Введіть коректний рік (1900-2100):")
+            return
+    except ValueError:
+        await message.answer("❌ Введіть рік числом (наприклад: 2012):")
+        return
+
+    await state.update_data(new_series_year=year)
+    await message.answer(
+        f"✅ Рік: <b>{year}</b>\n\n"
+        "Введіть IMDB рейтинг (наприклад: <code>8.9</code>):"
+    )
+    await state.set_state(AddBatchMovieStates.waiting_for_new_series_imdb)
+
+
+@router.message(AddBatchMovieStates.waiting_for_new_series_imdb, ~F.text.startswith("/"))
+async def process_new_series_imdb(message: Message, state: FSMContext):
+    """Обробка IMDB рейтингу"""
+    try:
+        imdb = float(message.text.strip())
+        if imdb < 0 or imdb > 10:
+            await message.answer("❌ IMDB рейтинг має бути від 0 до 10:")
+            return
+    except ValueError:
+        await message.answer("❌ Введіть рейтинг числом (наприклад: 8.9):")
+        return
+
+    await state.update_data(new_series_imdb=imdb)
+    await message.answer(
+        f"✅ IMDB: <b>{imdb}</b>\n\n"
+        "Тепер переслати постер (фото) з каналу зберігання:"
+    )
+    await state.set_state(AddBatchMovieStates.waiting_for_new_series_poster)
+
+
+@router.message(AddBatchMovieStates.waiting_for_new_series_poster, F.photo)
+async def process_new_series_poster(message: Message, state: FSMContext, bot: Bot):
+    """Обробка постера серіалу"""
+    from bot.config import config
+
+    # Перевіряємо що фото переслано з каналу зберігання
+    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+        await message.answer("❌ Постер має бути пересланий з каналу зберігання!")
+        return
+
+    poster_file_id = message.photo[-1].file_id
+    data = await state.get_data()
+
+    # Створюємо серіал в базі
+    try:
+        series = await create_series(
+            title=data["new_series_title"],
+            title_en=data["new_series_title_en"],
+            year=data["new_series_year"],
+            imdb_rating=data["new_series_imdb"],
+            poster_file_id=poster_file_id,
+            added_by=message.from_user.id
+        )
+
+        series_id = str(series["_id"])
+
+        await state.update_data(
+            series_id=series_id,
+            title=data["new_series_title"]
+        )
+
+        await message.answer(
+            f"✅ <b>Серіал створено!</b>\n\n"
+            f"📺 <b>{data['new_series_title']}</b>\n"
+            f"🆔 ID: <code>{series_id}</code>\n\n"
+            f"━━━━━━━━━━━━━━━━\n\n"
+            f"Введіть номер сезону (наприклад: <code>1</code>):"
+        )
+        await state.set_state(AddBatchMovieStates.waiting_for_season)
+
+    except Exception as e:
+        logging.error(f"Error creating series: {str(e)}")
+        await message.answer(f"❌ Помилка при створенні серіалу: {str(e)}")
+        await state.clear()
+
+
+@router.message(AddBatchMovieStates.waiting_for_new_series_poster, ~F.text.startswith("/"))
+async def process_new_series_poster_invalid(message: Message, state: FSMContext):
+    """Обробка некоректного повідомлення замість постера"""
+    await message.answer(
+        "❌ Будь ласка, переслати фото (постер) з каналу зберігання.\n\n"
+        "Якщо хочете скасувати, введіть /cancel"
+    )
+
+
+# ===============================================
+# Додавання епізодів
+# ===============================================
 
 @router.message(AddBatchMovieStates.waiting_for_season, ~F.text.startswith("/"))
 async def process_season(message: Message, state: FSMContext):
