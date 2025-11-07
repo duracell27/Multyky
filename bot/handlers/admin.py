@@ -149,13 +149,17 @@ async def process_movie_video(message: Message, state: FSMContext):
         await message.answer("❌ Відео має бути переслане з каналу зберігання!")
         return
 
-    # Визначаємо тип файлу
+    # Визначаємо тип файлу та отримуємо розмір
     if message.video:
         video_file_id = message.video.file_id
         video_type = "video"
+        file_size = message.video.file_size or 0
+        duration = message.video.duration or 0
     elif message.document:
         video_file_id = message.document.file_id
         video_type = "document"
+        file_size = message.document.file_size or 0
+        duration = 0  # У document немає duration
     else:
         await message.answer("❌ Некоректний тип файлу.")
         return
@@ -172,7 +176,9 @@ async def process_movie_video(message: Message, state: FSMContext):
             poster_file_id=data["poster_file_id"],
             video_file_id=video_file_id,
             video_type=video_type,
-            added_by=message.from_user.id
+            added_by=message.from_user.id,
+            file_size=file_size,
+            duration=duration
         )
 
         movie_id = str(movie["_id"])
@@ -587,13 +593,17 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❌ Відео має бути переслане з каналу зберігання!")
         return
 
-    # Визначаємо тип файлу
+    # Визначаємо тип файлу та отримуємо розмір
     if message.video:
         video_file_id = message.video.file_id
         video_type = "video"
+        file_size = message.video.file_size or 0
+        duration = message.video.duration or 0
     elif message.document:
         video_file_id = message.document.file_id
         video_type = "document"
+        file_size = message.document.file_size or 0
+        duration = 0  # У document немає duration
     else:
         await message.answer("❌ Некоректний тип файлу.")
         return
@@ -664,10 +674,12 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
                 season=expected_season,
                 episode=episode_num,
                 video_file_id=video_file_id,
-                video_type=video_type
+                video_type=video_type,
+                file_size=file_size,
+                duration=duration
             )
             await status_msg.delete()
-            logging.info(f"Episode {episode_num} added to database from forwarded video")
+            logging.info(f"Episode {episode_num} added to database from forwarded video (size: {file_size} bytes)")
         except Exception as e:
             logging.error(f"Error saving episode {episode_num}: {str(e)}")
             await message.answer(

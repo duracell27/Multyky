@@ -12,6 +12,8 @@ async def create_movie(
     video_file_id: str,
     video_type: str,
     added_by: int,
+    file_size: int = 0,
+    duration: int = 0
 ) -> dict:
     """
     Створити новий мультфільм
@@ -25,6 +27,8 @@ async def create_movie(
         "content_type": "movie",
         "video_file_id": video_file_id,
         "video_type": video_type,
+        "file_size": file_size,
+        "duration": duration,
         "added_by": added_by,
         "added_at": datetime.now(timezone.utc),
         "views_count": 0,
@@ -73,7 +77,9 @@ async def add_episode_to_series(
     season: int,
     episode: int,
     video_file_id: str,
-    video_type: str
+    video_type: str,
+    file_size: int = 0,
+    duration: int = 0
 ) -> bool:
     """
     Додати серію до існуючого серіалу
@@ -86,6 +92,8 @@ async def add_episode_to_series(
     episode_data = {
         "video_file_id": video_file_id,
         "video_type": video_type,
+        "file_size": file_size,
+        "duration": duration,
         "added_at": datetime.now(timezone.utc)
     }
 
@@ -176,6 +184,37 @@ async def get_total_views_count() -> int:
     if result:
         return result[0].get("total_views", 0)
     return 0
+
+
+async def get_total_storage_size() -> float:
+    """
+    Отримати загальний розмір всіх відео в гігабайтах
+    Базове значення: 53.2 ГБ (для попередньо завантажених серій)
+    """
+    BASE_SIZE_GB = 53.2
+
+    # Отримуємо всі фільми
+    movies = await db.videos.find({"content_type": "movie"}).to_list(length=None)
+    movies_size = sum(movie.get("file_size", 0) for movie in movies)
+
+    # Отримуємо всі серіали
+    series_list = await db.videos.find({"content_type": "series"}).to_list(length=None)
+
+    # Рахуємо розмір всіх епізодів
+    episodes_size = 0
+    for series in series_list:
+        if "seasons" in series:
+            for season_num, episodes in series["seasons"].items():
+                for episode_num, episode_data in episodes.items():
+                    episodes_size += episode_data.get("file_size", 0)
+
+    # Загальний розмір у байтах
+    total_bytes = movies_size + episodes_size
+
+    # Конвертуємо в ГБ і додаємо базове значення
+    total_gb = BASE_SIZE_GB + (total_bytes / (1024 ** 3))
+
+    return round(total_gb, 2)
 
 
 async def get_all_movies_list() -> list:

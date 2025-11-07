@@ -15,7 +15,8 @@ from bot.database.movies import (
     get_movies_only_count,
     get_series_only_count,
     get_total_videos_count,
-    get_total_views_count
+    get_total_views_count,
+    get_total_storage_size
 )
 from bot.config import config
 
@@ -108,6 +109,7 @@ async def cmd_stats(message: Message):
     series_only_count = await get_series_only_count()
     total_videos_count = await get_total_videos_count()
     total_views_count = await get_total_views_count()
+    total_storage_gb = await get_total_storage_size()
 
     stats_text = (
         "📊 <b>Статистика бота:</b>\n\n"
@@ -120,6 +122,8 @@ async def cmd_stats(message: Message):
         f"   • Всього відео: {total_videos_count}\n\n"
         "📊 <b>Перегляди:</b>\n"
         f"   • Всього переглядів: {total_views_count}\n\n"
+        "💾 <b>Сховище:</b>\n"
+        f"   • Загальний розмір: {total_storage_gb} ГБ\n\n"
         f"<i>Статистика оновлюється в реальному часі</i>"
     )
 
