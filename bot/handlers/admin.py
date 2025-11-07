@@ -7,14 +7,15 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.states import AddBatchMovieStates
+from bot.states import AddMovieStates, AddBatchMovieStates
 from bot.database.movies import (
     add_episode_to_series,
     get_all_series_list,
     get_movie_by_id,
     get_season_episodes,
     get_episode,
-    create_series
+    create_series,
+    create_movie
 )
 from bot.database.users import update_last_series_added
 
@@ -27,6 +28,180 @@ batch_upload_locks = {}
 def is_admin(user_id: int) -> bool:
     """Перевірка чи користувач є адміністратором"""
     return user_id in config.ADMIN_IDS
+
+
+# ===============================================
+# Додавання одиночного фільму
+# ===============================================
+
+@router.message(Command("addMovie"))
+async def cmd_add_movie(message: Message, state: FSMContext):
+    """Початок процесу додавання фільму"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
+        return
+
+    await message.answer(
+        "🎬 <b>Додавання нового фільму</b>\n\n"
+        "Введіть українську назву фільму:"
+    )
+    await state.set_state(AddMovieStates.waiting_for_title)
+
+
+@router.message(AddMovieStates.waiting_for_title, ~F.text.startswith("/"))
+async def process_movie_title(message: Message, state: FSMContext):
+    """Обробка української назви фільму"""
+    title = message.text.strip()
+
+    await state.update_data(title=title)
+    await message.answer(
+        f"✅ Назва: <b>{title}</b>\n\n"
+        "Введіть англійську назву фільму:"
+    )
+    await state.set_state(AddMovieStates.waiting_for_title_en)
+
+
+@router.message(AddMovieStates.waiting_for_title_en, ~F.text.startswith("/"))
+async def process_movie_title_en(message: Message, state: FSMContext):
+    """Обробка англійської назви фільму"""
+    title_en = message.text.strip()
+
+    await state.update_data(title_en=title_en)
+    await message.answer(
+        f"✅ Англійська назва: <b>{title_en}</b>\n\n"
+        "Введіть рік випуску (наприклад: <code>2015</code>):"
+    )
+    await state.set_state(AddMovieStates.waiting_for_year)
+
+
+@router.message(AddMovieStates.waiting_for_year, ~F.text.startswith("/"))
+async def process_movie_year(message: Message, state: FSMContext):
+    """Обробка року випуску"""
+    try:
+        year = int(message.text.strip())
+        if year < 1900 or year > 2100:
+            await message.answer("❌ Введіть коректний рік (1900-2100):")
+            return
+    except ValueError:
+        await message.answer("❌ Введіть рік числом (наприклад: 2015):")
+        return
+
+    await state.update_data(year=year)
+    await message.answer(
+        f"✅ Рік: <b>{year}</b>\n\n"
+        "Введіть IMDB рейтинг (наприклад: <code>7.5</code>):"
+    )
+    await state.set_state(AddMovieStates.waiting_for_imdb)
+
+
+@router.message(AddMovieStates.waiting_for_imdb, ~F.text.startswith("/"))
+async def process_movie_imdb(message: Message, state: FSMContext):
+    """Обробка IMDB рейтингу"""
+    try:
+        imdb = float(message.text.strip())
+        if imdb < 0 or imdb > 10:
+            await message.answer("❌ IMDB рейтинг має бути від 0 до 10:")
+            return
+    except ValueError:
+        await message.answer("❌ Введіть рейтинг числом (наприклад: 7.5):")
+        return
+
+    await state.update_data(imdb=imdb)
+    await message.answer(
+        f"✅ IMDB: <b>{imdb}</b>\n\n"
+        "Тепер переслати постер (фото) з каналу зберігання:"
+    )
+    await state.set_state(AddMovieStates.waiting_for_poster)
+
+
+@router.message(AddMovieStates.waiting_for_poster, F.photo)
+async def process_movie_poster(message: Message, state: FSMContext):
+    """Обробка постера фільму"""
+    # Перевіряємо що фото переслано з каналу зберігання
+    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+        await message.answer("❌ Постер має бути пересланий з каналу зберігання!")
+        return
+
+    poster_file_id = message.photo[-1].file_id
+    await state.update_data(poster_file_id=poster_file_id)
+
+    await message.answer(
+        "✅ Постер отримано!\n\n"
+        "Тепер переслати відео фільму з каналу зберігання:"
+    )
+    await state.set_state(AddMovieStates.waiting_for_video)
+
+
+@router.message(AddMovieStates.waiting_for_poster, ~F.text.startswith("/"))
+async def process_movie_poster_invalid(message: Message, state: FSMContext):
+    """Обробка некоректного повідомлення замість постера"""
+    await message.answer(
+        "❌ Будь ласка, переслати фото (постер) з каналу зберігання.\n\n"
+        "Якщо хочете скасувати, введіть /cancel"
+    )
+
+
+@router.message(AddMovieStates.waiting_for_video, F.video | F.document)
+async def process_movie_video(message: Message, state: FSMContext):
+    """Обробка відео фільму"""
+    # Перевіряємо що відео переслано з каналу зберігання
+    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+        await message.answer("❌ Відео має бути переслане з каналу зберігання!")
+        return
+
+    # Визначаємо тип файлу
+    if message.video:
+        video_file_id = message.video.file_id
+        video_type = "video"
+    elif message.document:
+        video_file_id = message.document.file_id
+        video_type = "document"
+    else:
+        await message.answer("❌ Некоректний тип файлу.")
+        return
+
+    data = await state.get_data()
+
+    # Створюємо фільм в базі
+    try:
+        movie = await create_movie(
+            title=data["title"],
+            title_en=data["title_en"],
+            year=data["year"],
+            imdb_rating=data["imdb"],
+            poster_file_id=data["poster_file_id"],
+            video_file_id=video_file_id,
+            video_type=video_type,
+            added_by=message.from_user.id
+        )
+
+        movie_id = str(movie["_id"])
+
+        await message.answer(
+            f"✅ <b>Фільм успішно додано!</b>\n\n"
+            f"🎬 <b>{data['title']}</b>\n"
+            f"📅 Рік: {data['year']}\n"
+            f"⭐️ IMDB: {data['imdb']}\n"
+            f"🆔 ID: <code>{movie_id}</code>\n\n"
+            f"🎬 /catalog - переглянути каталог\n"
+            f"➕ /addMovie - додати ще фільм"
+        )
+
+        await state.clear()
+
+    except Exception as e:
+        logging.error(f"Error creating movie: {str(e)}")
+        await message.answer(f"❌ Помилка при створенні фільму: {str(e)}")
+        await state.clear()
+
+
+@router.message(AddMovieStates.waiting_for_video, ~F.text.startswith("/"))
+async def process_movie_video_invalid(message: Message, state: FSMContext):
+    """Обробка некоректного повідомлення замість відео"""
+    await message.answer(
+        "❌ Будь ласка, переслати відео файл з каналу зберігання.\n\n"
+        "Якщо хочете скасувати, введіть /cancel"
+    )
 
 
 # ===============================================

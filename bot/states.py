@@ -1,6 +1,16 @@
 from aiogram.fsm.state import State, StatesGroup
 
 
+class AddMovieStates(StatesGroup):
+    """Стани для додавання одиночного фільму"""
+    waiting_for_title = State()  # Чекаємо українську назву
+    waiting_for_title_en = State()  # Чекаємо англійську назву
+    waiting_for_year = State()  # Чекаємо рік
+    waiting_for_imdb = State()  # Чекаємо IMDB рейтинг
+    waiting_for_poster = State()  # Чекаємо постер
+    waiting_for_video = State()  # Чекаємо відео
+
+
 class AddBatchMovieStates(StatesGroup):
     """Стани для пакетного додавання серій серіалу"""
     choosing_existing_series = State()  # Вибір існуючого серіалу

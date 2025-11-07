@@ -28,13 +28,13 @@ from bot.utils import send_movie_video
 router = Router()
 
 
-async def create_series_poster_buttons(series_id: str, user_id: int) -> InlineKeyboardMarkup:
-    """Створити кнопки для постера з візуальною індикацією стану"""
+async def create_content_poster_buttons(content_id: str, user_id: int) -> InlineKeyboardMarkup:
+    """Створити кнопки для постера з візуальною індикацією стану (для фільмів і серіалів)"""
     # Перевіряємо чи користувач лайкнув/дизлайкнув
-    user_vote = await get_user_vote(series_id, user_id)
+    user_vote = await get_user_vote(content_id, user_id)
 
-    # Перевіряємо чи серіал в черзі перегляду
-    in_queue = await is_in_watch_later(user_id, series_id)
+    # Перевіряємо чи контент в черзі перегляду
+    in_queue = await is_in_watch_later(user_id, content_id)
 
     # Формуємо текст кнопок
     like_text = "👍 ✅" if user_vote == "like" else "👍"
@@ -43,11 +43,17 @@ async def create_series_poster_buttons(series_id: str, user_id: int) -> InlineKe
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text=like_text, callback_data=f"like:{series_id}"),
-            InlineKeyboardButton(text=dislike_text, callback_data=f"dislike:{series_id}"),
-            InlineKeyboardButton(text=watchlater_text, callback_data=f"watchlater:{series_id}")
+            InlineKeyboardButton(text=like_text, callback_data=f"like:{content_id}"),
+            InlineKeyboardButton(text=dislike_text, callback_data=f"dislike:{content_id}"),
+            InlineKeyboardButton(text=watchlater_text, callback_data=f"watchlater:{content_id}")
         ]
     ])
+
+
+# Для зворотної сумісності
+async def create_series_poster_buttons(series_id: str, user_id: int) -> InlineKeyboardMarkup:
+    """Створити кнопки для постера серіалу (використовує загальну функцію)"""
+    return await create_content_poster_buttons(series_id, user_id)
 
 
 @router.message(Command("catalog"))
@@ -453,18 +459,27 @@ async def send_movie(callback: CallbackQuery, bot: Bot):
     # Додаємо в історію перегляду
     await add_to_watch_history(callback.from_user.id, movie_id, movie)
 
-    # Відправляємо постер фільму
+    # Відправляємо постер фільму з розширеною інформацією
+    rating = movie.get('rating', 0)
+    views = movie.get('views_count', 0)
+
     poster_caption = (
-        f"🎬 <b>{movie['title']}</b>\n"
+        f"🎬 <b>{movie['title']}</b>\n\n"
         f"📅 Рік: {movie['year']}\n"
-        f"⭐️ IMDB: {movie['imdb_rating']}"
+        f"⭐️ IMDB: {movie['imdb_rating']}\n"
+        f"⭐️ Рейтинг: {rating}\n"
+        f"👁 Перегляди: {views}"
     )
+
+    # Створюємо кнопки для постера
+    poster_buttons = await create_content_poster_buttons(movie_id, callback.from_user.id)
 
     try:
         await bot.send_photo(
             chat_id=callback.from_user.id,
             photo=movie['poster_file_id'],
-            caption=poster_caption
+            caption=poster_caption,
+            reply_markup=poster_buttons
         )
     except Exception as e:
         # Якщо не вдалося відправити постер - не критично, продовжуємо
@@ -486,36 +501,40 @@ async def send_movie(callback: CallbackQuery, bot: Bot):
 
 @router.callback_query(F.data.startswith("like:"))
 async def handle_like(callback: CallbackQuery):
-    """Обробка лайка серіалу"""
-    series_id = callback.data.split(":", 1)[1]
+    """Обробка лайка фільму або серіалу"""
+    content_id = callback.data.split(":", 1)[1]
 
     # Перемикаємо лайк
-    result = await toggle_like(series_id, callback.from_user.id)
+    result = await toggle_like(content_id, callback.from_user.id)
 
     if not result:
         await callback.answer("❌ Помилка при обробці лайка", show_alert=True)
         return
 
-    # Отримуємо оновлену інформацію про серіал
-    series_info = await get_movie_by_id(series_id)
-    if not series_info:
-        await callback.answer("❌ Серіал не знайдено", show_alert=True)
+    # Отримуємо оновлену інформацію про контент
+    content_info = await get_movie_by_id(content_id)
+    if not content_info:
+        await callback.answer("❌ Контент не знайдено", show_alert=True)
         return
 
-    rating = series_info.get('rating', 0)
-    views = series_info.get('views_count', 0)
+    rating = content_info.get('rating', 0)
+    views = content_info.get('views_count', 0)
+    content_type = content_info.get('content_type', 'movie')
+
+    # Вибираємо смайлик залежно від типу
+    emoji = "📺" if content_type == "series" else "🎬"
 
     # Оновлюємо caption постера
     new_caption = (
-        f"📺 <b>{series_info['title']}</b>\n\n"
-        f"📅 Рік: {series_info['year']}\n"
-        f"⭐️ IMDB: {series_info['imdb_rating']}\n"
+        f"{emoji} <b>{content_info['title']}</b>\n\n"
+        f"📅 Рік: {content_info['year']}\n"
+        f"⭐️ IMDB: {content_info['imdb_rating']}\n"
         f"⭐️ Рейтинг: {rating}\n"
         f"👁 Перегляди: {views}"
     )
 
     # Створюємо оновлені кнопки з візуальною індикацією
-    poster_buttons = await create_series_poster_buttons(series_id, callback.from_user.id)
+    poster_buttons = await create_content_poster_buttons(content_id, callback.from_user.id)
 
     # Оновлюємо постер
     try:
@@ -535,36 +554,40 @@ async def handle_like(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("dislike:"))
 async def handle_dislike(callback: CallbackQuery):
-    """Обробка дизлайка серіалу"""
-    series_id = callback.data.split(":", 1)[1]
+    """Обробка дизлайка фільму або серіалу"""
+    content_id = callback.data.split(":", 1)[1]
 
     # Перемикаємо дизлайк
-    result = await toggle_dislike(series_id, callback.from_user.id)
+    result = await toggle_dislike(content_id, callback.from_user.id)
 
     if not result:
         await callback.answer("❌ Помилка при обробці дизлайка", show_alert=True)
         return
 
-    # Отримуємо оновлену інформацію про серіал
-    series_info = await get_movie_by_id(series_id)
-    if not series_info:
-        await callback.answer("❌ Серіал не знайдено", show_alert=True)
+    # Отримуємо оновлену інформацію про контент
+    content_info = await get_movie_by_id(content_id)
+    if not content_info:
+        await callback.answer("❌ Контент не знайдено", show_alert=True)
         return
 
-    rating = series_info.get('rating', 0)
-    views = series_info.get('views_count', 0)
+    rating = content_info.get('rating', 0)
+    views = content_info.get('views_count', 0)
+    content_type = content_info.get('content_type', 'movie')
+
+    # Вибираємо смайлик залежно від типу
+    emoji = "📺" if content_type == "series" else "🎬"
 
     # Оновлюємо caption постера
     new_caption = (
-        f"📺 <b>{series_info['title']}</b>\n\n"
-        f"📅 Рік: {series_info['year']}\n"
-        f"⭐️ IMDB: {series_info['imdb_rating']}\n"
+        f"{emoji} <b>{content_info['title']}</b>\n\n"
+        f"📅 Рік: {content_info['year']}\n"
+        f"⭐️ IMDB: {content_info['imdb_rating']}\n"
         f"⭐️ Рейтинг: {rating}\n"
         f"👁 Перегляди: {views}"
     )
 
     # Створюємо оновлені кнопки з візуальною індикацією
-    poster_buttons = await create_series_poster_buttons(series_id, callback.from_user.id)
+    poster_buttons = await create_content_poster_buttons(content_id, callback.from_user.id)
 
     # Оновлюємо постер
     try:
