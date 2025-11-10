@@ -24,3 +24,25 @@ class AddBatchMovieStates(StatesGroup):
     waiting_for_season = State()  # Чекаємо номер сезону
     waiting_for_episode_range = State()  # Чекаємо діапазон серій (наприклад "1-5" або "3")
     waiting_for_videos = State()  # Чекаємо пересланні відео з каналу
+
+
+class DeleteContentStates(StatesGroup):
+    """Стани для видалення контенту"""
+    choosing_content_type = State()  # Вибір типу (фільм або серіал)
+    choosing_content = State()  # Вибір конкретного контенту
+    choosing_delete_option = State()  # Вибір опції видалення (для серіалів)
+    choosing_season = State()  # Вибір сезону для видалення
+    choosing_episode = State()  # Вибір серії для видалення
+
+
+class EditContentStates(StatesGroup):
+    """Стани для редагування контенту"""
+    choosing_content_type = State()  # Вибір типу (фільм або серіал)
+    choosing_content = State()  # Вибір конкретного контенту
+    choosing_field = State()  # Вибір поля для редагування
+    waiting_for_new_value = State()  # Чекаємо нове значення
+    waiting_for_poster = State()  # Чекаємо новий постер
+    waiting_for_video = State()  # Чекаємо нове відео (для фільму)
+    choosing_season_for_edit = State()  # Вибір сезону для редагування серії
+    choosing_episode_for_edit = State()  # Вибір серії для редагування
+    waiting_for_episode_video = State()  # Чекаємо нове відео для серії

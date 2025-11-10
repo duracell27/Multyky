@@ -167,3 +167,38 @@ async def is_in_watch_later(user_id: int, series_id: str) -> bool:
     if user and "watch_later" in user:
         return series_id in user["watch_later"]
     return False
+
+
+async def mark_movie_as_watched(user_id: int, movie_id: str) -> bool:
+    """Відмітити фільм як переглянутий"""
+    result = await db.users.update_one(
+        {"user_id": user_id},
+        {"$addToSet": {"watched_movies": movie_id}},  # $addToSet не додає дублікати
+        upsert=True
+    )
+    return result.modified_count > 0 or result.upserted_id is not None
+
+
+async def unmark_movie_as_watched(user_id: int, movie_id: str) -> bool:
+    """Зняти відмітку перегляду з фільму"""
+    result = await db.users.update_one(
+        {"user_id": user_id},
+        {"$pull": {"watched_movies": movie_id}}
+    )
+    return result.modified_count > 0
+
+
+async def is_movie_watched(user_id: int, movie_id: str) -> bool:
+    """Перевірити чи фільм переглянутий"""
+    user = await get_user(user_id)
+    if user and "watched_movies" in user:
+        return movie_id in user["watched_movies"]
+    return False
+
+
+async def get_watched_movies(user_id: int) -> list:
+    """Отримати список переглянутих фільмів"""
+    user = await get_user(user_id)
+    if user and "watched_movies" in user:
+        return user["watched_movies"]
+    return []

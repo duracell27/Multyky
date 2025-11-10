@@ -497,3 +497,79 @@ async def get_user_vote(series_id: str, user_id: int) -> str:
         return "dislike"
     else:
         return None
+
+
+async def delete_movie(movie_id: str) -> bool:
+    """Видалити фільм"""
+    from bson import ObjectId
+    result = await db.videos.delete_one({"_id": ObjectId(movie_id)})
+    return result.deleted_count > 0
+
+
+async def delete_series(series_id: str) -> bool:
+    """Видалити серіал повністю"""
+    from bson import ObjectId
+    result = await db.videos.delete_one({"_id": ObjectId(series_id)})
+    return result.deleted_count > 0
+
+
+async def delete_season(series_id: str, season: int) -> bool:
+    """Видалити сезон з серіалу"""
+    from bson import ObjectId
+
+    season_key = str(season)
+    result = await db.videos.update_one(
+        {"_id": ObjectId(series_id)},
+        {"$unset": {f"seasons.{season_key}": ""}}
+    )
+    return result.modified_count > 0
+
+
+async def delete_episode(series_id: str, season: int, episode: int) -> bool:
+    """Видалити серію з сезону"""
+    from bson import ObjectId
+
+    season_key = str(season)
+    episode_key = str(episode)
+
+    result = await db.videos.update_one(
+        {"_id": ObjectId(series_id)},
+        {"$unset": {f"seasons.{season_key}.{episode_key}": ""}}
+    )
+    return result.modified_count > 0
+
+
+# ===============================================
+# Редагування контенту
+# ===============================================
+
+async def update_movie_field(movie_id: str, field: str, value) -> bool:
+    """Оновити поле фільму або серіалу"""
+    from bson import ObjectId
+
+    result = await db.videos.update_one(
+        {"_id": ObjectId(movie_id)},
+        {"$set": {field: value}}
+    )
+    return result.modified_count > 0
+
+
+async def update_episode_video(series_id: str, season: int, episode: int, video_file_id: str, video_type: str, file_size: int = 0, duration: int = 0) -> bool:
+    """Оновити відео серії"""
+    from bson import ObjectId
+
+    season_key = str(season)
+    episode_key = str(episode)
+
+    result = await db.videos.update_one(
+        {"_id": ObjectId(series_id)},
+        {
+            "$set": {
+                f"seasons.{season_key}.{episode_key}.video_file_id": video_file_id,
+                f"seasons.{season_key}.{episode_key}.video_type": video_type,
+                f"seasons.{season_key}.{episode_key}.file_size": file_size,
+                f"seasons.{season_key}.{episode_key}.duration": duration,
+            }
+        }
+    )
+    return result.modified_count > 0

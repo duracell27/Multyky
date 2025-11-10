@@ -7,15 +7,23 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.states import AddMovieStates, AddBatchMovieStates
+from bot.states import AddMovieStates, AddBatchMovieStates, DeleteContentStates, EditContentStates
 from bot.database.movies import (
     add_episode_to_series,
     get_all_series_list,
+    get_all_movies_list,
     get_movie_by_id,
     get_season_episodes,
     get_episode,
+    get_series_seasons,
     create_series,
-    create_movie
+    create_movie,
+    delete_movie,
+    delete_series,
+    delete_season,
+    delete_episode,
+    update_movie_field,
+    update_episode_video
 )
 from bot.database.users import update_last_series_added
 
@@ -741,3 +749,1035 @@ async def cmd_cancel(message: Message, state: FSMContext):
 
     await state.clear()
     await message.answer("✅ Операцію скасовано.")
+
+
+# ===============================================
+# Видалення контенту
+# ===============================================
+
+@router.message(Command("deleteContent"))
+async def cmd_delete_content(message: Message, state: FSMContext):
+    """Початок процесу видалення контенту"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
+        return
+
+    buttons = [
+        [InlineKeyboardButton(text="🎬 Видалити фільм", callback_data="deltype:movie")],
+        [InlineKeyboardButton(text="📺 Видалити серіал", callback_data="deltype:series")],
+        [InlineKeyboardButton(text="❌ Скасувати", callback_data="deltype:cancel")]
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
+        "🗑 <b>Видалення контенту</b>\n\n"
+        "Оберіть тип контенту для видалення:",
+        reply_markup=keyboard
+    )
+    await state.set_state(DeleteContentStates.choosing_content_type)
+
+
+@router.callback_query(DeleteContentStates.choosing_content_type, F.data.startswith("deltype:"))
+async def process_delete_type(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору типу контенту для видалення"""
+    content_type = callback.data.split(":", 1)[1]
+
+    if content_type == "cancel":
+        await callback.message.edit_text("❌ Видалення скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    await state.update_data(delete_content_type=content_type)
+
+    if content_type == "movie":
+        # Отримуємо список фільмів
+        movies_list = await get_all_movies_list()
+
+        if not movies_list:
+            await callback.message.edit_text("❌ Немає фільмів для видалення.")
+            await state.clear()
+            await callback.answer()
+            return
+
+        # Створюємо кнопки для вибору фільму
+        buttons = []
+        for movie in movies_list[:20]:  # Обмежуємо до 20 для уникнення великих меню
+            movie_id = str(movie["_id"])
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"🎬 {movie['title']} ({movie['year']})",
+                    callback_data=f"delmovie:{movie_id}"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(text="❌ Скасувати", callback_data="delmovie:cancel")
+        ])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        await callback.message.edit_text(
+            "🎬 <b>Виберіть фільм для видалення:</b>\n\n"
+            f"<i>Всього фільмів: {len(movies_list)}</i>",
+            reply_markup=keyboard
+        )
+        await state.set_state(DeleteContentStates.choosing_content)
+
+    elif content_type == "series":
+        # Отримуємо список серіалів
+        series_list = await get_all_series_list()
+
+        if not series_list:
+            await callback.message.edit_text("❌ Немає серіалів для видалення.")
+            await state.clear()
+            await callback.answer()
+            return
+
+        # Створюємо кнопки для вибору серіалу
+        buttons = []
+        for series in series_list[:20]:
+            series_id = str(series["_id"])
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"📺 {series['title']}",
+                    callback_data=f"delseries:{series_id}"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(text="❌ Скасувати", callback_data="delseries:cancel")
+        ])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        await callback.message.edit_text(
+            "📺 <b>Виберіть серіал:</b>",
+            reply_markup=keyboard
+        )
+        await state.set_state(DeleteContentStates.choosing_content)
+
+    await callback.answer()
+
+
+@router.callback_query(DeleteContentStates.choosing_content, F.data.startswith("delmovie:"))
+async def process_delete_movie_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору фільму для видалення"""
+    movie_id = callback.data.split(":", 1)[1]
+
+    if movie_id == "cancel":
+        await callback.message.edit_text("❌ Видалення скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    # Отримуємо інформацію про фільм
+    movie = await get_movie_by_id(movie_id)
+
+    if not movie:
+        await callback.answer("❌ Фільм не знайдено", show_alert=True)
+        await state.clear()
+        return
+
+    await state.update_data(delete_movie_id=movie_id)
+
+    # Показуємо підтвердження
+    buttons = [
+        [InlineKeyboardButton(text="✅ Так, видалити", callback_data=f"confirm_del_movie:{movie_id}")],
+        [InlineKeyboardButton(text="❌ Ні, скасувати", callback_data="confirm_del_movie:cancel")]
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(
+        f"⚠️ <b>Підтвердження видалення</b>\n\n"
+        f"🎬 <b>{movie['title']}</b>\n"
+        f"📅 Рік: {movie['year']}\n"
+        f"⭐️ IMDB: {movie['imdb_rating']}\n\n"
+        f"Ви впевнені, що хочете видалити цей фільм?",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("confirm_del_movie:"))
+async def process_confirm_delete_movie(callback: CallbackQuery, state: FSMContext):
+    """Підтвердження видалення фільму"""
+    movie_id = callback.data.split(":", 1)[1]
+
+    if movie_id == "cancel":
+        await callback.message.edit_text("❌ Видалення скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    # Видаляємо фільм
+    success = await delete_movie(movie_id)
+
+    if success:
+        await callback.message.edit_text("✅ Фільм успішно видалено!")
+        await callback.answer("✅ Фільм видалено")
+    else:
+        await callback.message.edit_text("❌ Помилка при видаленні фільму.")
+        await callback.answer("❌ Помилка", show_alert=True)
+
+    await state.clear()
+
+
+@router.callback_query(DeleteContentStates.choosing_content, F.data.startswith("delseries:"))
+async def process_delete_series_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору серіалу"""
+    series_id = callback.data.split(":", 1)[1]
+
+    if series_id == "cancel":
+        await callback.message.edit_text("❌ Видалення скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    # Отримуємо інформацію про серіал
+    series = await get_movie_by_id(series_id)
+
+    if not series:
+        await callback.answer("❌ Серіал не знайдено", show_alert=True)
+        await state.clear()
+        return
+
+    await state.update_data(delete_series_id=series_id, series_title=series['title'])
+
+    # Показуємо опції видалення
+    buttons = [
+        [InlineKeyboardButton(text="🗑 Видалити весь серіал", callback_data=f"delopt:whole:{series_id}")],
+        [InlineKeyboardButton(text="📺 Видалити сезон", callback_data=f"delopt:season:{series_id}")],
+        [InlineKeyboardButton(text="🎬 Видалити серію", callback_data=f"delopt:episode:{series_id}")],
+        [InlineKeyboardButton(text="❌ Скасувати", callback_data="delopt:cancel")]
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(
+        f"📺 <b>{series['title']}</b>\n\n"
+        f"Оберіть опцію видалення:",
+        reply_markup=keyboard
+    )
+    await state.set_state(DeleteContentStates.choosing_delete_option)
+    await callback.answer()
+
+
+@router.callback_query(DeleteContentStates.choosing_delete_option, F.data.startswith("delopt:"))
+async def process_delete_option(callback: CallbackQuery, state: FSMContext):
+    """Обробка опції видалення серіалу"""
+    parts = callback.data.split(":", 2)
+    option = parts[1]
+
+    if option == "cancel":
+        await callback.message.edit_text("❌ Видалення скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    series_id = parts[2]
+    data = await state.get_data()
+    series_title = data.get('series_title')
+
+    if option == "whole":
+        # Підтвердження видалення всього серіалу
+        buttons = [
+            [InlineKeyboardButton(text="✅ Так, видалити весь серіал", callback_data=f"confirm_del_whole:{series_id}")],
+            [InlineKeyboardButton(text="❌ Ні, скасувати", callback_data="confirm_del_whole:cancel")]
+        ]
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        await callback.message.edit_text(
+            f"⚠️ <b>Підтвердження видалення</b>\n\n"
+            f"📺 <b>{series_title}</b>\n\n"
+            f"Ви впевнені, що хочете видалити ВЕСЬ серіал з усіма сезонами та серіями?",
+            reply_markup=keyboard
+        )
+
+    elif option == "season":
+        # Показуємо список сезонів
+        series = await get_movie_by_id(series_id)
+        if not series or "seasons" not in series or not series["seasons"]:
+            await callback.answer("❌ У серіалу немає сезонів", show_alert=True)
+            return
+
+        seasons = sorted([int(s) for s in series["seasons"].keys()])
+        buttons = []
+        for season_num in seasons:
+            episode_count = len(series["seasons"][str(season_num)])
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"Сезон {season_num} ({episode_count} серій)",
+                    callback_data=f"delseason:{series_id}:{season_num}"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(text="❌ Скасувати", callback_data="delseason:cancel")
+        ])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        await callback.message.edit_text(
+            f"📺 <b>{series_title}</b>\n\n"
+            f"Оберіть сезон для видалення:",
+            reply_markup=keyboard
+        )
+        await state.set_state(DeleteContentStates.choosing_season)
+
+    elif option == "episode":
+        # Показуємо список сезонів для вибору серії
+        series = await get_movie_by_id(series_id)
+        if not series or "seasons" not in series or not series["seasons"]:
+            await callback.answer("❌ У серіалу немає сезонів", show_alert=True)
+            return
+
+        seasons = sorted([int(s) for s in series["seasons"].keys()])
+        buttons = []
+        for season_num in seasons:
+            episode_count = len(series["seasons"][str(season_num)])
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"Сезон {season_num} ({episode_count} серій)",
+                    callback_data=f"delepisode_season:{series_id}:{season_num}"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(text="❌ Скасувати", callback_data="delepisode_season:cancel")
+        ])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        await callback.message.edit_text(
+            f"📺 <b>{series_title}</b>\n\n"
+            f"Спочатку оберіть сезон:",
+            reply_markup=keyboard
+        )
+        await state.set_state(DeleteContentStates.choosing_season)
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("confirm_del_whole:"))
+async def process_confirm_delete_whole_series(callback: CallbackQuery, state: FSMContext):
+    """Підтвердження видалення всього серіалу"""
+    series_id = callback.data.split(":", 1)[1]
+
+    if series_id == "cancel":
+        await callback.message.edit_text("❌ Видалення скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    # Видаляємо серіал
+    success = await delete_series(series_id)
+
+    if success:
+        await callback.message.edit_text("✅ Серіал успішно видалено!")
+        await callback.answer("✅ Серіал видалено")
+    else:
+        await callback.message.edit_text("❌ Помилка при видаленні серіалу.")
+        await callback.answer("❌ Помилка", show_alert=True)
+
+    await state.clear()
+
+
+@router.callback_query(DeleteContentStates.choosing_season, F.data.startswith("delseason:"))
+async def process_delete_season_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору сезону для видалення"""
+    parts = callback.data.split(":", 2)
+
+    if parts[1] == "cancel":
+        await callback.message.edit_text("❌ Видалення скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    series_id = parts[1]
+    season_num = int(parts[2])
+
+    data = await state.get_data()
+    series_title = data.get('series_title')
+
+    # Підтвердження видалення сезону
+    buttons = [
+        [InlineKeyboardButton(text="✅ Так, видалити", callback_data=f"confirm_del_season:{series_id}:{season_num}")],
+        [InlineKeyboardButton(text="❌ Ні, скасувати", callback_data="confirm_del_season:cancel")]
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(
+        f"⚠️ <b>Підтвердження видалення</b>\n\n"
+        f"📺 <b>{series_title}</b>\n"
+        f"Сезон {season_num}\n\n"
+        f"Ви впевнені, що хочете видалити цей сезон з усіма серіями?",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("confirm_del_season:"))
+async def process_confirm_delete_season(callback: CallbackQuery, state: FSMContext):
+    """Підтвердження видалення сезону"""
+    parts = callback.data.split(":", 2)
+
+    if parts[1] == "cancel":
+        await callback.message.edit_text("❌ Видалення скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    series_id = parts[1]
+    season_num = int(parts[2])
+
+    # Видаляємо сезон
+    success = await delete_season(series_id, season_num)
+
+    if success:
+        await callback.message.edit_text(f"✅ Сезон {season_num} успішно видалено!")
+        await callback.answer("✅ Сезон видалено")
+    else:
+        await callback.message.edit_text("❌ Помилка при видаленні сезону.")
+        await callback.answer("❌ Помилка", show_alert=True)
+
+    await state.clear()
+
+
+@router.callback_query(DeleteContentStates.choosing_season, F.data.startswith("delepisode_season:"))
+async def process_delete_episode_season_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору сезону для видалення серії"""
+    parts = callback.data.split(":", 2)
+
+    if parts[1] == "cancel":
+        await callback.message.edit_text("❌ Видалення скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    series_id = parts[1]
+    season_num = int(parts[2])
+
+    await state.update_data(delete_season=season_num)
+
+    # Отримуємо список серій
+    episodes = await get_season_episodes(series_id, season_num)
+
+    if not episodes:
+        await callback.answer("❌ У цьому сезоні немає серій", show_alert=True)
+        return
+
+    data = await state.get_data()
+    series_title = data.get('series_title')
+
+    # Створюємо кнопки для вибору серії
+    episode_nums = sorted([int(ep) for ep in episodes.keys()])
+    buttons = []
+    for ep_num in episode_nums:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"Серія {ep_num}",
+                callback_data=f"delepisode:{series_id}:{season_num}:{ep_num}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="❌ Скасувати", callback_data="delepisode:cancel")
+    ])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(
+        f"📺 <b>{series_title}</b>\n"
+        f"Сезон {season_num}\n\n"
+        f"Оберіть серію для видалення:",
+        reply_markup=keyboard
+    )
+    await state.set_state(DeleteContentStates.choosing_episode)
+    await callback.answer()
+
+
+@router.callback_query(DeleteContentStates.choosing_episode, F.data.startswith("delepisode:"))
+async def process_delete_episode_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору серії для видалення"""
+    parts = callback.data.split(":", 3)
+
+    if parts[1] == "cancel":
+        await callback.message.edit_text("❌ Видалення скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    series_id = parts[1]
+    season_num = int(parts[2])
+    episode_num = int(parts[3])
+
+    data = await state.get_data()
+    series_title = data.get('series_title')
+
+    # Підтвердження видалення серії
+    buttons = [
+        [InlineKeyboardButton(text="✅ Так, видалити", callback_data=f"confirm_del_episode:{series_id}:{season_num}:{episode_num}")],
+        [InlineKeyboardButton(text="❌ Ні, скасувати", callback_data="confirm_del_episode:cancel")]
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(
+        f"⚠️ <b>Підтвердження видалення</b>\n\n"
+        f"📺 <b>{series_title}</b>\n"
+        f"Сезон {season_num}, Серія {episode_num}\n\n"
+        f"Ви впевнені, що хочете видалити цю серію?",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("confirm_del_episode:"))
+async def process_confirm_delete_episode(callback: CallbackQuery, state: FSMContext):
+    """Підтвердження видалення серії"""
+    parts = callback.data.split(":", 3)
+
+    if parts[1] == "cancel":
+        await callback.message.edit_text("❌ Видалення скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    series_id = parts[1]
+    season_num = int(parts[2])
+    episode_num = int(parts[3])
+
+    # Видаляємо серію
+    success = await delete_episode(series_id, season_num, episode_num)
+
+    if success:
+        await callback.message.edit_text(f"✅ Серія {episode_num} успішно видалено!")
+        await callback.answer("✅ Серія видалено")
+    else:
+        await callback.message.edit_text("❌ Помилка при видаленні серії.")
+        await callback.answer("❌ Помилка", show_alert=True)
+
+    await state.clear()
+
+
+# ===============================================
+# Редагування контенту
+# ===============================================
+
+@router.message(Command("editContent"))
+async def cmd_edit_content(message: Message, state: FSMContext):
+    """Початок процесу редагування контенту"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
+        return
+
+    buttons = [
+        [InlineKeyboardButton(text="🎬 Редагувати фільм", callback_data="edittype:movie")],
+        [InlineKeyboardButton(text="📺 Редагувати серіал", callback_data="edittype:series")],
+        [InlineKeyboardButton(text="❌ Скасувати", callback_data="edittype:cancel")]
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
+        "✏️ <b>Редагування контенту</b>\n\n"
+        "Оберіть тип контенту для редагування:",
+        reply_markup=keyboard
+    )
+    await state.set_state(EditContentStates.choosing_content_type)
+
+
+@router.callback_query(EditContentStates.choosing_content_type, F.data.startswith("edittype:"))
+async def process_edit_type(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору типу контенту для редагування"""
+    content_type = callback.data.split(":", 1)[1]
+
+    if content_type == "cancel":
+        await callback.message.edit_text("❌ Редагування скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    await state.update_data(edit_content_type=content_type)
+
+    if content_type == "movie":
+        # Отримуємо список фільмів
+        movies_list = await get_all_movies_list()
+
+        if not movies_list:
+            await callback.message.edit_text("❌ Немає фільмів для редагування.")
+            await state.clear()
+            await callback.answer()
+            return
+
+        # Створюємо кнопки для вибору фільму
+        buttons = []
+        for movie in movies_list[:20]:
+            movie_id = str(movie["_id"])
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"🎬 {movie['title']} ({movie['year']})",
+                    callback_data=f"editmovie:{movie_id}"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(text="❌ Скасувати", callback_data="editmovie:cancel")
+        ])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        await callback.message.edit_text(
+            "🎬 <b>Виберіть фільм для редагування:</b>\n\n"
+            f"<i>Всього фільмів: {len(movies_list)}</i>",
+            reply_markup=keyboard
+        )
+        await state.set_state(EditContentStates.choosing_content)
+
+    elif content_type == "series":
+        # Отримуємо список серіалів
+        series_list = await get_all_series_list()
+
+        if not series_list:
+            await callback.message.edit_text("❌ Немає серіалів для редагування.")
+            await state.clear()
+            await callback.answer()
+            return
+
+        # Створюємо кнопки для вибору серіалу
+        buttons = []
+        for series in series_list[:20]:
+            series_id = str(series["_id"])
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"📺 {series['title']}",
+                    callback_data=f"editseries:{series_id}"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(text="❌ Скасувати", callback_data="editseries:cancel")
+        ])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        await callback.message.edit_text(
+            "📺 <b>Виберіть серіал для редагування:</b>",
+            reply_markup=keyboard
+        )
+        await state.set_state(EditContentStates.choosing_content)
+
+    await callback.answer()
+
+
+@router.callback_query(EditContentStates.choosing_content, F.data.startswith("editmovie:") | F.data.startswith("editseries:"))
+async def process_edit_content_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору контенту для редагування"""
+    data_parts = callback.data.split(":", 1)
+    content_id = data_parts[1]
+
+    if content_id == "cancel":
+        await callback.message.edit_text("❌ Редагування скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    # Отримуємо інформацію про контент
+    content = await get_movie_by_id(content_id)
+
+    if not content:
+        await callback.answer("❌ Контент не знайдено", show_alert=True)
+        await state.clear()
+        return
+
+    await state.update_data(edit_content_id=content_id)
+
+    # Показуємо доступні поля для редагування
+    buttons = [
+        [InlineKeyboardButton(text="📝 Українська назва", callback_data=f"editfield:title:{content_id}")],
+        [InlineKeyboardButton(text="🔤 Англійська назва", callback_data=f"editfield:title_en:{content_id}")],
+        [InlineKeyboardButton(text="📅 Рік", callback_data=f"editfield:year:{content_id}")],
+        [InlineKeyboardButton(text="⭐️ IMDB рейтинг", callback_data=f"editfield:imdb_rating:{content_id}")],
+        [InlineKeyboardButton(text="🖼 Замінити постер", callback_data=f"editfield:poster:{content_id}")],
+    ]
+
+    # Додаємо кнопку заміни відео в залежності від типу контенту
+    if content['content_type'] == 'movie':
+        buttons.append([InlineKeyboardButton(text="🎬 Замінити відео", callback_data=f"editfield:video:{content_id}")])
+    else:  # series
+        buttons.append([InlineKeyboardButton(text="📺 Замінити серію", callback_data=f"editfield:episode_video:{content_id}")])
+
+    buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="editfield:cancel")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(
+        f"✏️ <b>Редагування:</b>\n\n"
+        f"{'🎬' if content['content_type'] == 'movie' else '📺'} <b>{content['title']}</b>\n"
+        f"Англійська назва: {content['title_en']}\n"
+        f"📅 Рік: {content['year']}\n"
+        f"⭐️ IMDB: {content['imdb_rating']}\n\n"
+        f"Оберіть поле для редагування:",
+        reply_markup=keyboard
+    )
+    await state.set_state(EditContentStates.choosing_field)
+    await callback.answer()
+
+
+@router.callback_query(EditContentStates.choosing_field, F.data.startswith("editfield:"))
+async def process_edit_field_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору поля для редагування"""
+    parts = callback.data.split(":", 2)
+    field = parts[1]
+
+    if field == "cancel":
+        await callback.message.edit_text("❌ Редагування скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    content_id = parts[2]
+
+    # Зберігаємо поле яке редагуємо
+    await state.update_data(edit_field=field)
+
+    # Обробка постера
+    if field == "poster":
+        await callback.message.edit_text(
+            "🖼 <b>Заміна постера</b>\n\n"
+            "Перешліть новий постер (фото) з каналу зберігання:"
+        )
+        await state.set_state(EditContentStates.waiting_for_poster)
+        await callback.answer()
+        return
+
+    # Обробка відео для фільму
+    if field == "video":
+        await callback.message.edit_text(
+            "🎬 <b>Заміна відео фільму</b>\n\n"
+            "Перешліть нове відео з каналу зберігання:"
+        )
+        await state.set_state(EditContentStates.waiting_for_video)
+        await callback.answer()
+        return
+
+    # Обробка заміни серії для серіалу
+    if field == "episode_video":
+        # Отримуємо інформацію про серіал
+        series = await get_movie_by_id(content_id)
+        if not series or "seasons" not in series or not series["seasons"]:
+            await callback.answer("❌ У серіалу немає сезонів", show_alert=True)
+            return
+
+        seasons = sorted([int(s) for s in series["seasons"].keys()])
+        buttons = []
+        for season_num in seasons:
+            episode_count = len(series["seasons"][str(season_num)])
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"Сезон {season_num} ({episode_count} серій)",
+                    callback_data=f"editepisode_season:{content_id}:{season_num}"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(text="❌ Скасувати", callback_data="editepisode_season:cancel")
+        ])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        await callback.message.edit_text(
+            f"📺 <b>{series['title']}</b>\n\n"
+            f"Спочатку оберіть сезон:",
+            reply_markup=keyboard
+        )
+        await state.set_state(EditContentStates.choosing_season_for_edit)
+        await callback.answer()
+        return
+
+    # Показуємо підказку в залежності від поля
+    field_names = {
+        "title": "українську назву",
+        "title_en": "англійську назву",
+        "year": "рік (наприклад: 2015)",
+        "imdb_rating": "IMDB рейтинг (наприклад: 7.5)"
+    }
+
+    await callback.message.edit_text(
+        f"✏️ <b>Редагування поля</b>\n\n"
+        f"Введіть нове значення для поля <b>{field_names.get(field, field)}</b>:"
+    )
+    await state.set_state(EditContentStates.waiting_for_new_value)
+    await callback.answer()
+
+
+@router.message(EditContentStates.waiting_for_new_value, ~F.text.startswith("/"))
+async def process_edit_new_value(message: Message, state: FSMContext):
+    """Обробка нового значення для поля"""
+    data = await state.get_data()
+    content_id = data.get("edit_content_id")
+    field = data.get("edit_field")
+    new_value = message.text.strip()
+
+    # Валідація в залежності від типу поля
+    if field == "year":
+        try:
+            year = int(new_value)
+            if year < 1900 or year > 2100:
+                await message.answer("❌ Введіть коректний рік (1900-2100):")
+                return
+            new_value = year
+        except ValueError:
+            await message.answer("❌ Введіть рік числом (наприклад: 2015):")
+            return
+
+    elif field == "imdb_rating":
+        try:
+            rating = float(new_value)
+            if rating < 0 or rating > 10:
+                await message.answer("❌ IMDB рейтинг має бути від 0 до 10:")
+                return
+            new_value = rating
+        except ValueError:
+            await message.answer("❌ Введіть рейтинг числом (наприклад: 7.5):")
+            return
+
+    # Оновлюємо поле
+    success = await update_movie_field(content_id, field, new_value)
+
+    if success:
+        await message.answer(
+            f"✅ <b>Поле успішно оновлено!</b>\n\n"
+            f"Поле: <b>{field}</b>\n"
+            f"Нове значення: <b>{new_value}</b>"
+        )
+    else:
+        await message.answer("❌ Помилка при оновленні поля.")
+
+    await state.clear()
+
+
+# ===============================================
+# Обробники заміни постера та відео
+# ===============================================
+
+@router.message(EditContentStates.waiting_for_poster, F.photo)
+async def process_edit_poster(message: Message, state: FSMContext):
+    """Обробка нового постера"""
+    # Перевіряємо що фото переслано з каналу зберігання
+    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+        await message.answer("❌ Постер має бути пересланий з каналу зберігання!")
+        return
+
+    data = await state.get_data()
+    content_id = data.get("edit_content_id")
+    poster_file_id = message.photo[-1].file_id
+
+    # Оновлюємо постер
+    success = await update_movie_field(content_id, "poster_file_id", poster_file_id)
+
+    if success:
+        await message.answer("✅ Постер успішно замінено!")
+    else:
+        await message.answer("❌ Помилка при оновленні постера.")
+
+    await state.clear()
+
+
+@router.message(EditContentStates.waiting_for_poster, ~F.text.startswith("/"))
+async def process_edit_poster_invalid(message: Message, state: FSMContext):
+    """Обробка некоректного повідомлення замість постера"""
+    await message.answer(
+        "❌ Будь ласка, переслати фото (постер) з каналу зберігання.\n\n"
+        "Якщо хочете скасувати, введіть /cancel"
+    )
+
+
+@router.message(EditContentStates.waiting_for_video, F.video | F.document)
+async def process_edit_video(message: Message, state: FSMContext):
+    """Обробка нового відео для фільму"""
+    # Перевіряємо що відео переслано з каналу зберігання
+    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+        await message.answer("❌ Відео має бути переслане з каналу зберігання!")
+        return
+
+    data = await state.get_data()
+    content_id = data.get("edit_content_id")
+
+    # Визначаємо тип файлу та отримуємо розмір
+    if message.video:
+        video_file_id = message.video.file_id
+        video_type = "video"
+        file_size = message.video.file_size or 0
+        duration = message.video.duration or 0
+    elif message.document:
+        video_file_id = message.document.file_id
+        video_type = "document"
+        file_size = message.document.file_size or 0
+        duration = 0
+    else:
+        await message.answer("❌ Некоректний тип файлу.")
+        return
+
+    # Оновлюємо відео та супутні поля
+    try:
+        success1 = await update_movie_field(content_id, "video_file_id", video_file_id)
+        success2 = await update_movie_field(content_id, "video_type", video_type)
+        success3 = await update_movie_field(content_id, "file_size", file_size)
+        success4 = await update_movie_field(content_id, "duration", duration)
+
+        if success1:
+            await message.answer("✅ Відео успішно замінено!")
+        else:
+            await message.answer("❌ Помилка при оновленні відео.")
+    except Exception as e:
+        logging.error(f"Error updating video: {str(e)}")
+        await message.answer(f"❌ Помилка: {str(e)}")
+
+    await state.clear()
+
+
+@router.message(EditContentStates.waiting_for_video, ~F.text.startswith("/"))
+async def process_edit_video_invalid(message: Message, state: FSMContext):
+    """Обробка некоректного повідомлення замість відео"""
+    await message.answer(
+        "❌ Будь ласка, переслати відео файл з каналу зберігання.\n\n"
+        "Якщо хочете скасувати, введіть /cancel"
+    )
+
+
+@router.callback_query(EditContentStates.choosing_season_for_edit, F.data.startswith("editepisode_season:"))
+async def process_edit_episode_season_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору сезону для редагування серії"""
+    parts = callback.data.split(":", 2)
+
+    if parts[1] == "cancel":
+        await callback.message.edit_text("❌ Редагування скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    series_id = parts[1]
+    season_num = int(parts[2])
+
+    await state.update_data(edit_season=season_num)
+
+    # Отримуємо список серій
+    episodes = await get_season_episodes(series_id, season_num)
+
+    if not episodes:
+        await callback.answer("❌ У цьому сезоні немає серій", show_alert=True)
+        return
+
+    data = await state.get_data()
+
+    # Отримуємо інформацію про серіал для відображення назви
+    series = await get_movie_by_id(series_id)
+    series_title = series['title'] if series else "Серіал"
+
+    # Створюємо кнопки для вибору серії
+    episode_nums = sorted([int(ep) for ep in episodes.keys()])
+    buttons = []
+    for ep_num in episode_nums:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"Серія {ep_num}",
+                callback_data=f"editepisode:{series_id}:{season_num}:{ep_num}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="❌ Скасувати", callback_data="editepisode:cancel")
+    ])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(
+        f"📺 <b>{series_title}</b>\n"
+        f"Сезон {season_num}\n\n"
+        f"Оберіть серію для заміни відео:",
+        reply_markup=keyboard
+    )
+    await state.set_state(EditContentStates.choosing_episode_for_edit)
+    await callback.answer()
+
+
+@router.callback_query(EditContentStates.choosing_episode_for_edit, F.data.startswith("editepisode:"))
+async def process_edit_episode_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору серії для заміни відео"""
+    parts = callback.data.split(":", 3)
+
+    if parts[1] == "cancel":
+        await callback.message.edit_text("❌ Редагування скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    series_id = parts[1]
+    season_num = int(parts[2])
+    episode_num = int(parts[3])
+
+    data = await state.get_data()
+    await state.update_data(
+        edit_series_id=series_id,
+        edit_season=season_num,
+        edit_episode=episode_num
+    )
+
+    # Отримуємо інформацію про серіал
+    series = await get_movie_by_id(series_id)
+    series_title = series['title'] if series else "Серіал"
+
+    await callback.message.edit_text(
+        f"📺 <b>{series_title}</b>\n"
+        f"Сезон {season_num}, Серія {episode_num}\n\n"
+        f"Перешліть нове відео з каналу зберігання:"
+    )
+    await state.set_state(EditContentStates.waiting_for_episode_video)
+    await callback.answer()
+
+
+@router.message(EditContentStates.waiting_for_episode_video, F.video | F.document)
+async def process_edit_episode_video(message: Message, state: FSMContext):
+    """Обробка нового відео для серії"""
+    # Перевіряємо що відео переслано з каналу зберігання
+    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+        await message.answer("❌ Відео має бути переслане з каналу зберігання!")
+        return
+
+    data = await state.get_data()
+    series_id = data.get("edit_series_id")
+    season_num = data.get("edit_season")
+    episode_num = data.get("edit_episode")
+
+    # Визначаємо тип файлу та отримуємо розмір
+    if message.video:
+        video_file_id = message.video.file_id
+        video_type = "video"
+        file_size = message.video.file_size or 0
+        duration = message.video.duration or 0
+    elif message.document:
+        video_file_id = message.document.file_id
+        video_type = "document"
+        file_size = message.document.file_size or 0
+        duration = 0
+    else:
+        await message.answer("❌ Некоректний тип файлу.")
+        return
+
+    # Оновлюємо відео серії
+    try:
+        success = await update_episode_video(
+            series_id, season_num, episode_num,
+            video_file_id, video_type, file_size, duration
+        )
+
+        if success:
+            await message.answer(
+                f"✅ Відео серії успішно замінено!\n\n"
+                f"Сезон {season_num}, Серія {episode_num}"
+            )
+        else:
+            await message.answer("❌ Помилка при оновленні відео серії.")
+    except Exception as e:
+        logging.error(f"Error updating episode video: {str(e)}")
+        await message.answer(f"❌ Помилка: {str(e)}")
+
+    await state.clear()
+
+
+@router.message(EditContentStates.waiting_for_episode_video, ~F.text.startswith("/"))
+async def process_edit_episode_video_invalid(message: Message, state: FSMContext):
+    """Обробка некоректного повідомлення замість відео серії"""
+    await message.answer(
+        "❌ Будь ласка, переслати відео файл з каналу зберігання.\n\n"
+        "Якщо хочете скасувати, введіть /cancel"
+    )

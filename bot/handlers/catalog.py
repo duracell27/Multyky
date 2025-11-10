@@ -21,7 +21,10 @@ from bot.database.users import (
     add_to_watch_history,
     add_to_watch_later,
     remove_from_watch_later,
-    is_in_watch_later
+    is_in_watch_later,
+    mark_movie_as_watched,
+    unmark_movie_as_watched,
+    is_movie_watched
 )
 from bot.utils import send_movie_video
 
@@ -93,9 +96,14 @@ async def show_movies(callback: CallbackQuery):
     for movie in movies:
         # Використовуємо ID замість назви - набагато коротше
         movie_id = str(movie["_id"])
+
+        # Перевіряємо чи фільм переглянутий
+        is_watched = await is_movie_watched(callback.from_user.id, movie_id)
+        watched_emoji = "👁 " if is_watched else ""
+
         buttons.append([
             InlineKeyboardButton(
-                text=f"🎬 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
+                text=f"{watched_emoji}🎬 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
                 callback_data=f"m:{movie_id}"
             )
         ])
@@ -491,9 +499,40 @@ async def send_movie(callback: CallbackQuery, bot: Bot):
         f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики 🇺🇦 | Мультфільми Українською</a>"
     )
 
-    # Відправляємо відео
+    # Перевіряємо чи фільм вже переглянутий
+    is_watched = await is_movie_watched(callback.from_user.id, movie_id)
+
+    # Створюємо кнопку "Переглянуто"
+    watched_text = "✅ Переглянуто" if is_watched else "Відмітити 👁"
+    video_buttons = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=watched_text,
+                callback_data=f"watched:{movie_id}"
+            )
+        ]
+    ])
+
+    # Відправляємо відео з кнопкою
     try:
-        await send_movie_video(bot, callback.from_user.id, movie, caption)
+        video_file_id = movie.get("video_file_id")
+        video_type = movie.get("video_type", "video")
+
+        if video_type == "video":
+            await bot.send_video(
+                chat_id=callback.from_user.id,
+                video=video_file_id,
+                caption=caption,
+                reply_markup=video_buttons
+            )
+        else:
+            await bot.send_document(
+                chat_id=callback.from_user.id,
+                document=video_file_id,
+                caption=caption,
+                reply_markup=video_buttons
+            )
+
         await callback.answer("✅ Приємного перегляду!")
     except Exception as e:
         await callback.answer(f"❌ Помилка при відправці відео: {str(e)}", show_alert=True)
@@ -628,6 +667,41 @@ async def handle_watch_later(callback: CallbackQuery):
         await callback.message.edit_reply_markup(reply_markup=poster_buttons)
     except Exception:
         pass  # Якщо кнопки не змінились, ігноруємо помилку
+
+
+@router.callback_query(F.data.startswith("watched:"))
+async def handle_watched(callback: CallbackQuery):
+    """Обробка відмітки перегляду фільму"""
+    movie_id = callback.data.split(":", 1)[1]
+
+    # Перевіряємо чи фільм вже переглянутий
+    is_watched = await is_movie_watched(callback.from_user.id, movie_id)
+
+    if is_watched:
+        # Знімаємо відмітку
+        await unmark_movie_as_watched(callback.from_user.id, movie_id)
+        await callback.answer("Відмітку перегляду знято")
+        watched_text = "Відмітити 👁"
+    else:
+        # Відмічаємо як переглянутий
+        await mark_movie_as_watched(callback.from_user.id, movie_id)
+        await callback.answer("✅ Фільм відмічено як переглянутий!")
+        watched_text = "✅ Переглянуто"
+
+    # Оновлюємо кнопку щоб показати новий стан
+    video_buttons = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=watched_text,
+                callback_data=f"watched:{movie_id}"
+            )
+        ]
+    ])
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=video_buttons)
+    except Exception:
+        pass  # Якщо кнопка не змінилась, ігноруємо помилку
 
 
 @router.callback_query(F.data == "catalog:back")

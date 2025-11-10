@@ -39,6 +39,22 @@ async def main():
     # Підключення до бази даних
     await db.connect()
 
+    # Налаштування меню команд
+    from aiogram.types import BotCommand
+
+    # Команди для користувачів (адміністраторські команди доступні через /menu)
+    commands = [
+        BotCommand(command="start", description="Запустити бота"),
+        BotCommand(command="catalog", description="Каталог мультфільмів"),
+        BotCommand(command="history", description="Історія переглядів"),
+        BotCommand(command="watchlater", description="Переглянути пізніше"),
+        BotCommand(command="menu", description="Головне меню"),
+    ]
+
+    # Встановлюємо команди
+    await bot.set_my_commands(commands)
+    logging.info("✅ Меню команд налаштовано")
+
     try:
         logging.info("🤖 Бот запущено!")
         await dp.start_polling(bot)
