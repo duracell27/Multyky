@@ -7,7 +7,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.states import AddMovieStates, AddBatchMovieStates, DeleteContentStates, EditContentStates
+from bot.states import AddMovieStates, AddBatchMovieStates, DeleteContentStates, EditContentStates, AddSuperBatchMovieStates
 from bot.database.movies import (
     add_episode_to_series,
     get_all_series_list,
@@ -736,6 +736,426 @@ async def process_batch_invalid_video(message: Message, state: FSMContext):
     await message.answer(
         "❌ Будь ласка, переслати відео файл з каналу зберігання.\n\n"
         "Якщо хочете скасувати, введіть /cancel"
+    )
+
+
+# ===============================================
+# Супер пакетне додавання серій (Auto-detect season/episode)
+# ===============================================
+
+@router.message(Command("addSuperBatchMovie"))
+async def cmd_add_super_batch_movie(message: Message, state: FSMContext):
+    """Початок процесу супер пакетного додавання серій з автоматичним визначенням сезону/епізоду"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
+        return
+
+    # Отримуємо список серіалів
+    series_list = await get_all_series_list()
+
+    # Створюємо кнопки для вибору серіалу
+    buttons = []
+    if series_list:
+        for series in series_list:
+            series_id = str(series["_id"])
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"📺 {series['title']}",
+                    callback_data=f"super_sel_series:{series_id}"
+                )
+            ])
+
+    # Додаємо кнопку для створення нового серіалу
+    buttons.append([
+        InlineKeyboardButton(
+            text="➕ Створити новий серіал",
+            callback_data="super_create_new_series"
+        )
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
+        "🚀 <b>Супер пакетне додавання серій</b>\n\n"
+        "Ця команда автоматично визначає сезон і епізод з caption відео.\n\n"
+        "📺 <b>Виберіть серіал для додавання серій:</b>",
+        reply_markup=keyboard
+    )
+    await state.set_state(AddSuperBatchMovieStates.choosing_existing_series)
+
+
+@router.callback_query(AddSuperBatchMovieStates.choosing_existing_series, F.data.startswith("super_sel_series:"))
+async def process_super_series_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору серіалу для супер пакетного додавання"""
+    series_id = callback.data.split(":", 1)[1]
+
+    # Отримуємо інформацію про серіал
+    series_info = await get_movie_by_id(series_id)
+
+    if not series_info:
+        await callback.answer("❌ Серіал не знайдено", show_alert=True)
+        return
+
+    # Зберігаємо інформацію про серіал
+    await state.update_data(
+        series_id=series_id,
+        title=series_info["title"],
+        received_videos={}  # Словник для відстеження доданих відео: {(season, episode): file_id}
+    )
+
+    # Рахуємо детальну інформацію про серії
+    seasons_info = []
+    total_episodes = 0
+    if "seasons" in series_info and series_info["seasons"]:
+        for season_num, episodes in sorted(series_info["seasons"].items(), key=lambda x: int(x[0])):
+            episode_count = len(episodes)
+            total_episodes += episode_count
+            seasons_info.append(f"   • Сезон {season_num}: {episode_count} серій")
+
+    if seasons_info:
+        info_text = "\n".join(seasons_info)
+        summary = f"Всього завантажено: {total_episodes} серій"
+    else:
+        info_text = "   • Серій ще немає"
+        summary = "Серіал порожній"
+
+    await callback.message.edit_text(
+        f"✅ <b>Вибрано серіал:</b>\n\n"
+        f"📺 <b>{series_info['title']}</b>\n"
+        f"🆔 ID: <code>{series_id}</code>\n\n"
+        f"<b>📊 Поточний стан:</b>\n{info_text}\n\n"
+        f"<i>{summary}</i>\n\n"
+        f"━━━━━━━━━━━━━━━━\n\n"
+        f"🚀 <b>Супер режим активовано!</b>\n\n"
+        f"📤 Надсилайте відео з каналу зберігання.\n"
+        f"Кожне відео має містити caption:\n"
+        f"<code>id:{series_id} season:N episode:M</code>\n\n"
+        f"⚡️ <b>Переваги:</b>\n"
+        f"• Автоматичне визначення сезону та епізоду\n"
+        f"• Можна додавати серії з різних сезонів\n"
+        f"• Надсилайте відео по одному або кілька підряд\n\n"
+        f"Щоб завершити, надішліть: <code>готово</code> або <code>/done</code>"
+    )
+    await state.set_state(AddSuperBatchMovieStates.waiting_for_videos)
+    await callback.answer()
+
+
+# ===============================================
+# Створення нового серіалу для супер пакетного режиму
+# ===============================================
+
+@router.callback_query(AddSuperBatchMovieStates.choosing_existing_series, F.data == "super_create_new_series")
+async def start_create_new_super_series(callback: CallbackQuery, state: FSMContext):
+    """Початок створення нового серіалу для супер режиму"""
+    await callback.message.edit_text(
+        "➕ <b>Створення нового серіалу (Супер режим)</b>\n\n"
+        "Введіть українську назву серіалу:"
+    )
+    await state.set_state(AddSuperBatchMovieStates.waiting_for_new_series_title)
+    await callback.answer()
+
+
+@router.message(AddSuperBatchMovieStates.waiting_for_new_series_title, ~F.text.startswith("/"))
+async def process_super_new_series_title(message: Message, state: FSMContext):
+    """Обробка української назви серіалу для супер режиму"""
+    title = message.text.strip()
+
+    await state.update_data(new_series_title=title)
+    await message.answer(
+        f"✅ Назва: <b>{title}</b>\n\n"
+        "Введіть англійську назву серіалу:"
+    )
+    await state.set_state(AddSuperBatchMovieStates.waiting_for_new_series_title_en)
+
+
+@router.message(AddSuperBatchMovieStates.waiting_for_new_series_title_en, ~F.text.startswith("/"))
+async def process_super_new_series_title_en(message: Message, state: FSMContext):
+    """Обробка англійської назви серіалу для супер режиму"""
+    title_en = message.text.strip()
+
+    await state.update_data(new_series_title_en=title_en)
+    await message.answer(
+        f"✅ Англійська назва: <b>{title_en}</b>\n\n"
+        "Введіть рік випуску (наприклад: <code>2012</code>):"
+    )
+    await state.set_state(AddSuperBatchMovieStates.waiting_for_new_series_year)
+
+
+@router.message(AddSuperBatchMovieStates.waiting_for_new_series_year, ~F.text.startswith("/"))
+async def process_super_new_series_year(message: Message, state: FSMContext):
+    """Обробка року випуску для супер режиму"""
+    try:
+        year = int(message.text.strip())
+        if year < 1900 or year > 2100:
+            await message.answer("❌ Введіть коректний рік (1900-2100):")
+            return
+    except ValueError:
+        await message.answer("❌ Введіть рік числом (наприклад: 2012):")
+        return
+
+    await state.update_data(new_series_year=year)
+    await message.answer(
+        f"✅ Рік: <b>{year}</b>\n\n"
+        "Введіть IMDB рейтинг (наприклад: <code>8.9</code>):"
+    )
+    await state.set_state(AddSuperBatchMovieStates.waiting_for_new_series_imdb)
+
+
+@router.message(AddSuperBatchMovieStates.waiting_for_new_series_imdb, ~F.text.startswith("/"))
+async def process_super_new_series_imdb(message: Message, state: FSMContext):
+    """Обробка IMDB рейтингу для супер режиму"""
+    try:
+        imdb_rating = float(message.text.strip().replace(',', '.'))
+        if imdb_rating < 0 or imdb_rating > 10:
+            await message.answer("❌ Рейтинг має бути від 0 до 10:")
+            return
+    except ValueError:
+        await message.answer("❌ Введіть число (наприклад: 8.9):")
+        return
+
+    await state.update_data(new_series_imdb=imdb_rating)
+    await message.answer(
+        f"✅ IMDB рейтинг: <b>{imdb_rating}</b>\n\n"
+        "Надішліть постер серіалу (фото):"
+    )
+    await state.set_state(AddSuperBatchMovieStates.waiting_for_new_series_poster)
+
+
+@router.message(AddSuperBatchMovieStates.waiting_for_new_series_poster, F.photo)
+async def process_super_new_series_poster(message: Message, state: FSMContext):
+    """Обробка постера для нового серіалу (супер режим)"""
+    poster_file_id = message.photo[-1].file_id
+    data = await state.get_data()
+
+    # Створюємо новий серіал
+    try:
+        series_id = await create_series(
+            title=data["new_series_title"],
+            title_en=data["new_series_title_en"],
+            year=data["new_series_year"],
+            imdb_rating=data["new_series_imdb"],
+            poster_file_id=poster_file_id,
+            added_by=message.from_user.id
+        )
+
+        # Зберігаємо ID серіалу
+        await state.update_data(
+            series_id=str(series_id),
+            title=data["new_series_title"],
+            received_videos={}
+        )
+
+        await message.answer(
+            f"✅ <b>Серіал створено!</b>\n\n"
+            f"📺 <b>{data['new_series_title']}</b>\n"
+            f"🆔 ID: <code>{series_id}</code>\n\n"
+            f"━━━━━━━━━━━━━━━━\n\n"
+            f"🚀 <b>Супер режим активовано!</b>\n\n"
+            f"📤 Надсилайте відео з каналу зберігання.\n"
+            f"Кожне відео має містити caption:\n"
+            f"<code>id:{series_id} season:N episode:M</code>\n\n"
+            f"⚡️ <b>Переваги:</b>\n"
+            f"• Автоматичне визначення сезону та епізоду\n"
+            f"• Можна додавати серії з різних сезонів\n"
+            f"• Надсилайте відео по одному або кілька підряд\n\n"
+            f"Щоб завершити, надішліть: <code>готово</code> або <code>/done</code>"
+        )
+
+        await state.set_state(AddSuperBatchMovieStates.waiting_for_videos)
+
+    except Exception as e:
+        logging.error(f"Error creating series: {str(e)}")
+        await message.answer(f"❌ Помилка при створенні серіалу: {str(e)}")
+        await state.clear()
+
+
+@router.message(AddSuperBatchMovieStates.waiting_for_new_series_poster)
+async def process_super_invalid_poster(message: Message, state: FSMContext):
+    """Обробка некоректного типу замість постера"""
+    await message.answer("❌ Будь ласка, надішліть фото постера.")
+
+
+# ===============================================
+# Обробка відео для супер пакетного режиму
+# ===============================================
+
+@router.message(AddSuperBatchMovieStates.waiting_for_videos, F.video | F.document)
+async def process_super_batch_videos(message: Message, state: FSMContext, bot: Bot):
+    """Обробка пересланих відео для супер пакетного додавання з автоматичним визначенням сезону/епізоду"""
+    data = await state.get_data()
+
+    series_id = data.get("series_id")
+    received_videos = data.get("received_videos", {})
+
+    # Перевіряємо що відео переслано з каналу
+    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+        await message.answer("❌ Відео має бути переслане з каналу зберігання!")
+        return
+
+    # Визначаємо тип файлу та отримуємо розмір
+    if message.video:
+        video_file_id = message.video.file_id
+        video_type = "video"
+        file_size = message.video.file_size or 0
+        duration = message.video.duration or 0
+    elif message.document:
+        video_file_id = message.document.file_id
+        video_type = "document"
+        file_size = message.document.file_size or 0
+        duration = 0
+    else:
+        await message.answer("❌ Некоректний тип файлу.")
+        return
+
+    # Парсимо caption
+    caption = message.caption or ""
+    parsed_data = parse_video_caption(caption)
+
+    if not parsed_data:
+        await message.answer(
+            f"❌ Не вдалося розпарсити caption відео!\n\n"
+            f"Очікуваний формат:\n"
+            f"<code>id:{series_id} season:N episode:M</code>\n\n"
+            f"Отриманий caption:\n<code>{caption}</code>"
+        )
+        return
+
+    # Перевіряємо ID серіалу
+    if parsed_data['id'] != series_id:
+        await message.answer(
+            f"❌ ID серіалу не співпадає!\n\n"
+            f"Очікується: <code>{series_id}</code>\n"
+            f"Отримано: <code>{parsed_data['id']}</code>"
+        )
+        return
+
+    season = parsed_data['season']
+    episode_num = parsed_data['episode']
+
+    # Перевіряємо чи серія вже додана в цій сесії
+    video_key = f"{season}:{episode_num}"
+    if video_key in received_videos:
+        await message.answer(f"⚠️ Серія S{season}E{episode_num} вже була додана в цій сесії!")
+        return
+
+    # Використовуємо lock для синхронізації
+    lock_key = f"{series_id}:{season}"
+    if lock_key not in batch_upload_locks:
+        batch_upload_locks[lock_key] = asyncio.Lock()
+
+    async with batch_upload_locks[lock_key]:
+        # Перевіряємо чи серія вже є в базі
+        existing_episode = await get_episode(series_id, season, episode_num)
+        if existing_episode:
+            await message.answer(f"⏭️ Серія S{season}E{episode_num} вже існує, пропускаю...")
+            return
+
+        # Додаємо серію в базу
+        try:
+            status_msg = await message.answer(f"⏳ Додаю серію S{season}E{episode_num} в базу...")
+            await add_episode_to_series(
+                series_id=series_id,
+                season=season,
+                episode=episode_num,
+                video_file_id=video_file_id,
+                video_type=video_type,
+                file_size=file_size,
+                duration=duration
+            )
+            await status_msg.delete()
+            logging.info(f"Episode S{season}E{episode_num} added to database in super batch mode (size: {file_size} bytes)")
+        except Exception as e:
+            logging.error(f"Error saving episode S{season}E{episode_num}: {str(e)}")
+            await message.answer(
+                f"❌ Помилка при збереженні серії S{season}E{episode_num}: {str(e)}"
+            )
+            return
+
+        # Додаємо відео до списку отриманих
+        received_videos[video_key] = video_file_id
+        await state.update_data(received_videos=received_videos)
+
+        current_count = len(received_videos)
+
+        # Групуємо серії по сезонах
+        seasons_summary = {}
+        for key in received_videos.keys():
+            s, e = key.split(":")
+            if s not in seasons_summary:
+                seasons_summary[s] = []
+            seasons_summary[s].append(int(e))
+
+        # Формуємо повідомлення про додані серії
+        summary_lines = []
+        for s in sorted(seasons_summary.keys(), key=int):
+            episodes = sorted(seasons_summary[s])
+            summary_lines.append(f"   Сезон {s}: {len(episodes)} серій ({', '.join(map(str, episodes))})")
+
+        summary_text = "\n".join(summary_lines)
+
+        await message.answer(
+            f"✅ <b>Серія S{season}E{episode_num} додана!</b>\n\n"
+            f"📊 <b>Всього додано в цій сесії: {current_count}</b>\n\n"
+            f"{summary_text}\n\n"
+            f"📤 Продовжуйте надсилати відео або надішліть <code>готово</code> для завершення"
+        )
+
+
+@router.message(AddSuperBatchMovieStates.waiting_for_videos, F.text.regexp(r"(?i)^(готово|done|/done)$"))
+async def finish_super_batch_upload(message: Message, state: FSMContext):
+    """Завершення супер пакетного додавання"""
+    data = await state.get_data()
+    received_videos = data.get("received_videos", {})
+
+    if not received_videos:
+        await message.answer(
+            "⚠️ Не додано жодної серії.\n\n"
+            "Операцію скасовано."
+        )
+        await state.clear()
+        return
+
+    # Групуємо серії по сезонах
+    seasons_summary = {}
+    for key in received_videos.keys():
+        s, e = key.split(":")
+        if s not in seasons_summary:
+            seasons_summary[s] = []
+        seasons_summary[s].append(int(e))
+
+    # Формуємо детальне повідомлення
+    summary_lines = []
+    total_count = 0
+    for s in sorted(seasons_summary.keys(), key=int):
+        episodes = sorted(seasons_summary[s])
+        total_count += len(episodes)
+        episodes_str = ", ".join(map(str, episodes))
+        summary_lines.append(f"   • Сезон {s}: {len(episodes)} серій ({episodes_str})")
+
+    summary_text = "\n".join(summary_lines)
+
+    await update_last_series_added(message.from_user.id, data.get("title"))
+
+    await message.answer(
+        f"🎉 <b>Супер пакетне додавання завершено!</b>\n\n"
+        f"📺 <b>{data.get('title')}</b>\n\n"
+        f"✅ <b>Успішно додано {total_count} серій:</b>\n\n"
+        f"{summary_text}\n\n"
+        f"🎬 /catalog - переглянути каталог\n"
+        f"🚀 /addSuperBatchMovie - додати ще серії"
+    )
+
+    # Очищуємо state
+    await state.clear()
+
+
+@router.message(AddSuperBatchMovieStates.waiting_for_videos, ~F.text.startswith("/"))
+async def process_super_batch_invalid_message(message: Message, state: FSMContext):
+    """Обробка некоректного типу повідомлення в супер режимі"""
+    await message.answer(
+        "❌ Будь ласка, переслати відео файл з каналу зберігання.\n\n"
+        "Щоб завершити додавання, надішліть: <code>готово</code> або <code>/done</code>\n"
+        "Для скасування: /cancel"
     )
 
 

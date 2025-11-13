@@ -1,6 +1,7 @@
 from aiogram import Router
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.fsm.context import FSMContext
 
 from bot.database.users import (
     get_or_create_user,
@@ -16,9 +17,11 @@ from bot.database.movies import (
     get_series_only_count,
     get_total_videos_count,
     get_total_views_count,
-    get_total_storage_size
+    get_total_storage_size,
+    search_content
 )
 from bot.config import config
+from bot.states import SearchStates
 
 router = Router()
 
@@ -30,6 +33,10 @@ async def cmd_start(message: Message):
     # Автоматична реєстрація користувача
     user = await get_or_create_user(message.from_user)
 
+    # Отримуємо кількість мультфільмів та серіалів
+    movies_count = await get_movies_only_count()
+    series_count = await get_series_only_count()
+
     # Перевіряємо чи це новий користувач
     is_new_user = user.get("registered_at") == user.get("last_activity")
 
@@ -38,14 +45,22 @@ async def cmd_start(message: Message):
             f"👋 Привіт, <b>{message.from_user.first_name}</b>!\n\n"
             f"Ласкаво просимо до бота з мультиками! 🎬\n\n"
             f"Тут ти зможеш переглядати улюблені мультфільми та серіали.\n\n"
+            f"📊 Наша галерея з кожним днем збільшується і складає:\n"
+            f"   🎬 Мультфільмів: <b>{movies_count}</b>\n"
+            f"   📺 Мультсеріалів: <b>{series_count}</b>\n\n"
             f"📺 /catalog - переглянути каталог\n"
+            f"🔍 /search - пошук мультфільмів\n"
             f"📜 /menu - головне меню з усіма командами"
         )
     else:
         welcome_text = (
             f"👋 З поверненням, <b>{message.from_user.first_name}</b>!\n\n"
             f"Радий бачити тебе знову! 🎬\n\n"
-            f"📺 /catalog - переглянути мультфільми\n"
+            f"📊 Наша галерея з кожним днем збільшується і складає:\n"
+            f"   🎬 Мультфільмів: <b>{movies_count}</b>\n"
+            f"   📺 Мультсеріалів: <b>{series_count}</b>\n\n"
+            f"📺 /catalog - переглянути каталог\n"
+            f"🔍 /search - пошук мультфільмів\n"
             f"📜 /menu - головне меню"
         )
 
@@ -71,9 +86,12 @@ async def cmd_menu(message: Message):
             "/history - Історія переглядів\n"
             "/watchlater - Переглянути пізніше\n"
             "/menu - Показати це меню\n\n"
+            "🔍 <b>Пошук:</b>\n"
+            "/search - Знайти мультфільм\n\n"
             "⚙️ <b>Команди адміністратора:</b>\n"
             "/addMovie - Додати мультфільм\n"
-            "/addBatchMovie - Додати серіал\n"
+            "/addBatchMovie - Додати серіал (базовий)\n"
+            "/addSuperBatchMovie - Додати серіал (авто-режим)\n"
             "/editContent - Редагувати контент\n"
             "/deleteContent - Видалити контент\n"
             "/stats - Статистика бота\n"
@@ -89,6 +107,8 @@ async def cmd_menu(message: Message):
             "/history - Історія переглядів\n"
             "/watchlater - Переглянути пізніше\n"
             "/menu - Показати це меню\n\n"
+            "🔍 <b>Пошук:</b>\n"
+            "/search - Знайти мультфільм\n\n"
             "📝 <i>Приємного перегляду!</i>"
         )
 
@@ -235,5 +255,84 @@ async def cmd_watch_later(message: Message):
         "📌 <b>Черга перегляду</b>\n\n"
         f"Збережено серіалів: {len(buttons)}\n"
         "Натисни щоб переглянути 👇",
+        reply_markup=keyboard
+    )
+
+
+@router.message(Command("search"))
+async def cmd_search(message: Message, state: FSMContext):
+    """Обробник команди /search - пошук мультфільмів"""
+
+    # Автоматично оновлюємо активність
+    await get_or_create_user(message.from_user)
+
+    # Встановлюємо стан очікування пошукового запиту
+    await state.set_state(SearchStates.waiting_for_query)
+
+    await message.answer(
+        "🔍 <b>Пошук мультфільмів</b>\n\n"
+        "Введи назву мультфільму або серіалу, який хочеш знайти:\n\n"
+        "<i>Можеш вводити як українською, так і англійською</i>"
+    )
+
+
+@router.message(SearchStates.waiting_for_query)
+async def process_search_query(message: Message, state: FSMContext):
+    """Обробник пошукового запиту"""
+
+    query = message.text.strip()
+
+    if not query:
+        await message.answer("❌ Введи назву для пошуку")
+        return
+
+    # Виконуємо пошук
+    results = await search_content(query)
+
+    if not results:
+        await message.answer(
+            f"😔 <b>Нічого не знайдено</b>\n\n"
+            f"За запитом '<i>{query}</i>' не знайдено жодного мультфільму.\n\n"
+            f"Введи іншу назву для пошуку або /catalog для перегляду всіх мультфільмів"
+        )
+        return
+
+    # Формуємо кнопки з результатами (максимум 20)
+    buttons = []
+    for content in results[:20]:
+        content_id = str(content.get("_id"))
+        title = content.get("title", "Невідомо")
+        title_en = content.get("title_en", "")
+        year = content.get("year", "")
+        imdb_rating = content.get("imdb_rating", 0)
+        content_type = content.get("content_type", "movie")
+
+        # Формуємо текст кнопки
+        if content_type == "series":
+            emoji = "📺"
+            callback_data = f"s:{content_id}:0"
+        else:
+            emoji = "🎬"
+            callback_data = f"m:{content_id}"
+
+        # Форматуємо назву кнопки
+        button_text = f"{emoji} {title}"
+        if year:
+            button_text += f" ({year})"
+        if imdb_rating > 0:
+            button_text += f" ⭐️ {imdb_rating}"
+
+        buttons.append([
+            InlineKeyboardButton(text=button_text, callback_data=callback_data)
+        ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
+        f"🔍 <b>Результати пошуку</b>\n\n"
+        f"За запитом '<i>{query}</i>' знайдено: <b>{len(results)}</b>\n"
+        f"Показано перші {min(len(results), 20)} результатів:\n\n"
+        f"<i>Натисни на назву для перегляду 👇</i>\n\n"
+        f"Можеш відразу ввести нову назву для пошуку або /menu для виходу",
         reply_markup=keyboard
     )

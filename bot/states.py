@@ -46,3 +46,21 @@ class EditContentStates(StatesGroup):
     choosing_season_for_edit = State()  # Вибір сезону для редагування серії
     choosing_episode_for_edit = State()  # Вибір серії для редагування
     waiting_for_episode_video = State()  # Чекаємо нове відео для серії
+
+
+class SearchStates(StatesGroup):
+    """Стани для пошуку контенту"""
+    waiting_for_query = State()  # Чекаємо пошуковий запит від користувача
+
+
+class AddSuperBatchMovieStates(StatesGroup):
+    """Стани для супер пакетного додавання серій (автоматичне визначення сезону/епізоду)"""
+    choosing_existing_series = State()  # Вибір існуючого серіалу
+    # Створення нового серіалу (якщо потрібно)
+    waiting_for_new_series_title = State()  # Чекаємо українську назву
+    waiting_for_new_series_title_en = State()  # Чекаємо англійську назву
+    waiting_for_new_series_year = State()  # Чекаємо рік
+    waiting_for_new_series_imdb = State()  # Чекаємо IMDB рейтинг
+    waiting_for_new_series_poster = State()  # Чекаємо постер
+    # Додавання епізодів (автоматично визначаємо сезон і епізод з caption)
+    waiting_for_videos = State()  # Чекаємо переслані відео з каналу

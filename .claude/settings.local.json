@@ -9,7 +9,9 @@
       "Bash(awk:*)",
       "Bash(xargs:*)",
       "Bash(killall:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(find:*)",
+      "Bash(pkill:*)"
     ],
     "deny": [],
     "ask": []

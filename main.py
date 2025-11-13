@@ -46,6 +46,7 @@ async def main():
     commands = [
         BotCommand(command="start", description="Запустити бота"),
         BotCommand(command="catalog", description="Каталог мультфільмів"),
+        BotCommand(command="search", description="Пошук мультфільмів"),
         BotCommand(command="history", description="Історія переглядів"),
         BotCommand(command="watchlater", description="Переглянути пізніше"),
         BotCommand(command="menu", description="Головне меню"),
