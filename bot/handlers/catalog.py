@@ -1,6 +1,7 @@
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.fsm.context import FSMContext
 
 from bot.database.movies import (
     get_all_movies_list,
@@ -60,8 +61,11 @@ async def create_series_poster_buttons(series_id: str, user_id: int) -> InlineKe
 
 
 @router.message(Command("catalog"))
-async def cmd_catalog(message: Message):
+async def cmd_catalog(message: Message, state: FSMContext):
     """Показати каталог мультфільмів і серіалів"""
+
+    # Очищаємо стан (наприклад, якщо користувач був у пошуку)
+    await state.clear()
 
     # Автоматично оновлюємо активність
     await get_or_create_user(message.from_user)

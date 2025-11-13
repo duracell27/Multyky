@@ -1,4 +1,4 @@
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
@@ -27,8 +27,11 @@ router = Router()
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
     """Обробник команди /start - автоматично реєструє користувача"""
+
+    # Очищаємо стан (наприклад, якщо користувач був у пошуку)
+    await state.clear()
 
     # Автоматична реєстрація користувача
     user = await get_or_create_user(message.from_user)
@@ -68,8 +71,11 @@ async def cmd_start(message: Message):
 
 
 @router.message(Command("menu"))
-async def cmd_menu(message: Message):
+async def cmd_menu(message: Message, state: FSMContext):
     """Обробник команди /menu - головне меню"""
+
+    # Очищаємо стан (наприклад, якщо користувач був у пошуку)
+    await state.clear()
 
     # Автоматично оновлюємо активність
     await get_or_create_user(message.from_user)
@@ -276,7 +282,7 @@ async def cmd_search(message: Message, state: FSMContext):
     )
 
 
-@router.message(SearchStates.waiting_for_query)
+@router.message(SearchStates.waiting_for_query, ~F.text.startswith("/"))
 async def process_search_query(message: Message, state: FSMContext):
     """Обробник пошукового запиту"""
 
