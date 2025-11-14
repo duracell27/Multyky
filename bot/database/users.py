@@ -1,7 +1,10 @@
 from datetime import datetime
 from typing import Optional
+from aiogram import Bot
 from aiogram.types import User
 from bot.database import db
+from bot.config import config
+import logging
 
 
 async def get_user(user_id: int) -> Optional[dict]:
@@ -37,7 +40,36 @@ async def update_last_activity(user_id: int):
     )
 
 
-async def get_or_create_user(user: User) -> dict:
+async def notify_admins_about_new_user(bot: Bot, user: User):
+    """Надіслати повідомлення адмінам про нового користувача"""
+    username = f"@{user.username}" if user.username else "немає username"
+    is_premium = "⭐️ Premium" if user.is_premium else ""
+
+    message = (
+        f"👤 <b>Новий користувач!</b>\n\n"
+        f"ID: <code>{user.id}</code>\n"
+        f"Ім'я: {user.first_name or 'немає'}"
+    )
+
+    if user.last_name:
+        message += f" {user.last_name}"
+
+    message += f"\nUsername: {username}\n"
+
+    if is_premium:
+        message += f"{is_premium}\n"
+
+    message += f"Мова: {user.language_code or 'не вказано'}"
+
+    # Надсилаємо повідомлення кожному адміну
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, message)
+        except Exception as e:
+            logging.error(f"Failed to send notification to admin {admin_id}: {e}")
+
+
+async def get_or_create_user(user: User, bot: Optional[Bot] = None) -> dict:
     """Отримати користувача або створити нового якщо не існує"""
     existing_user = await get_user(user.id)
 
@@ -47,7 +79,13 @@ async def get_or_create_user(user: User) -> dict:
         return existing_user
 
     # Створюємо нового користувача
-    return await create_user(user)
+    new_user = await create_user(user)
+
+    # Надсилаємо повідомлення адмінам про нову реєстрацію
+    if bot:
+        await notify_admins_about_new_user(bot, user)
+
+    return new_user
 
 
 async def get_all_users() -> list:

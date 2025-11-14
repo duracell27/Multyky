@@ -49,6 +49,7 @@ async def main():
         BotCommand(command="search", description="Пошук мультфільмів"),
         BotCommand(command="history", description="Історія переглядів"),
         BotCommand(command="watchlater", description="Переглянути пізніше"),
+        BotCommand(command="help", description="Допомога і зворотній зв'язок"),
         BotCommand(command="menu", description="Головне меню"),
     ]
 

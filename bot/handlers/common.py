@@ -1,6 +1,6 @@
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 
 from bot.database.users import (
@@ -21,20 +21,20 @@ from bot.database.movies import (
     search_content
 )
 from bot.config import config
-from bot.states import SearchStates
+from bot.states import SearchStates, HelpStates
 
 router = Router()
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
+async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     """Обробник команди /start - автоматично реєструє користувача"""
 
     # Очищаємо стан (наприклад, якщо користувач був у пошуку)
     await state.clear()
 
     # Автоматична реєстрація користувача
-    user = await get_or_create_user(message.from_user)
+    user = await get_or_create_user(message.from_user, bot)
 
     # Отримуємо кількість мультфільмів та серіалів
     movies_count = await get_movies_only_count()
@@ -53,6 +53,7 @@ async def cmd_start(message: Message, state: FSMContext):
             f"   📺 Мультсеріалів: <b>{series_count}</b>\n\n"
             f"📺 /catalog - переглянути каталог\n"
             f"🔍 /search - пошук мультфільмів\n"
+            f"❓ /help - допомога і зворотній зв'язок\n"
             f"📜 /menu - головне меню з усіма командами"
         )
     else:
@@ -64,6 +65,7 @@ async def cmd_start(message: Message, state: FSMContext):
             f"   📺 Мультсеріалів: <b>{series_count}</b>\n\n"
             f"📺 /catalog - переглянути каталог\n"
             f"🔍 /search - пошук мультфільмів\n"
+            f"❓ /help - допомога і зворотній зв'язок\n"
             f"📜 /menu - головне меню"
         )
 
@@ -71,14 +73,14 @@ async def cmd_start(message: Message, state: FSMContext):
 
 
 @router.message(Command("menu"))
-async def cmd_menu(message: Message, state: FSMContext):
+async def cmd_menu(message: Message, state: FSMContext, bot: Bot):
     """Обробник команди /menu - головне меню"""
 
     # Очищаємо стан (наприклад, якщо користувач був у пошуку)
     await state.clear()
 
     # Автоматично оновлюємо активність
-    await get_or_create_user(message.from_user)
+    await get_or_create_user(message.from_user, bot)
 
     # Перевіряємо чи користувач є адміністратором
     is_admin = message.from_user.id in config.ADMIN_IDS
@@ -94,6 +96,8 @@ async def cmd_menu(message: Message, state: FSMContext):
             "/menu - Показати це меню\n\n"
             "🔍 <b>Пошук:</b>\n"
             "/search - Знайти мультфільм\n\n"
+            "❓ <b>Допомога:</b>\n"
+            "/help - Допомога і зворотній зв'язок\n\n"
             "⚙️ <b>Команди адміністратора:</b>\n"
             "/addMovie - Додати мультфільм\n"
             "/addBatchMovie - Додати серіал (базовий)\n"
@@ -115,6 +119,8 @@ async def cmd_menu(message: Message, state: FSMContext):
             "/menu - Показати це меню\n\n"
             "🔍 <b>Пошук:</b>\n"
             "/search - Знайти мультфільм\n\n"
+            "❓ <b>Допомога:</b>\n"
+            "/help - Допомога і зворотній зв'язок\n\n"
             "📝 <i>Приємного перегляду!</i>"
         )
 
@@ -159,11 +165,11 @@ async def cmd_stats(message: Message):
 
 
 @router.message(Command("history"))
-async def cmd_history(message: Message):
+async def cmd_history(message: Message, bot: Bot):
     """Обробник команди /history - показати історію переглядів"""
 
     # Автоматично оновлюємо активність
-    await get_or_create_user(message.from_user)
+    await get_or_create_user(message.from_user, bot)
 
     # Отримуємо історію переглядів
     history = await get_watch_history(message.from_user.id)
@@ -214,11 +220,11 @@ async def cmd_history(message: Message):
 
 
 @router.message(Command("watchlater", "watchLater"))
-async def cmd_watch_later(message: Message):
+async def cmd_watch_later(message: Message, bot: Bot):
     """Обробник команди /watchlater - показати чергу перегляду"""
 
     # Автоматично оновлюємо активність
-    await get_or_create_user(message.from_user)
+    await get_or_create_user(message.from_user, bot)
 
     # Отримуємо чергу перегляду
     watch_later_ids = await get_watch_later(message.from_user.id)
@@ -266,11 +272,11 @@ async def cmd_watch_later(message: Message):
 
 
 @router.message(Command("search"))
-async def cmd_search(message: Message, state: FSMContext):
+async def cmd_search(message: Message, state: FSMContext, bot: Bot):
     """Обробник команди /search - пошук мультфільмів"""
 
     # Автоматично оновлюємо активність
-    await get_or_create_user(message.from_user)
+    await get_or_create_user(message.from_user, bot)
 
     # Встановлюємо стан очікування пошукового запиту
     await state.set_state(SearchStates.waiting_for_query)
@@ -342,3 +348,171 @@ async def process_search_query(message: Message, state: FSMContext):
         f"Можеш відразу ввести нову назву для пошуку або /menu для виходу",
         reply_markup=keyboard
     )
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message, state: FSMContext, bot: Bot):
+    """Обробник команди /help - допомога користувачу"""
+
+    # Очищаємо стан
+    await state.clear()
+
+    # Автоматично оновлюємо активність
+    await get_or_create_user(message.from_user, bot)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎬 Попросити мультфільм", callback_data="help:request")],
+        [InlineKeyboardButton(text="💬 Зв'язок з адміном", callback_data="help:contact")]
+    ])
+
+    await message.answer(
+        "❓ <b>Допомога</b>\n\n"
+        "Виберіть потрібну опцію:\n\n"
+        "🎬 <b>Попросити мультфільм</b>\n"
+        "Опишіть який мультфільм або серіал ви хочете побачити у боті\n\n"
+        "💬 <b>Зв'язок з адміном</b>\n"
+        "Напишіть повідомлення адміністратору з питанням або пропозицією",
+        reply_markup=keyboard
+    )
+
+
+@router.callback_query(F.data == "help:request")
+async def help_request_callback(callback: CallbackQuery, state: FSMContext):
+    """Обробник кнопки 'Попросити мультфільм'"""
+    await callback.answer()
+
+    await state.set_state(HelpStates.waiting_for_request)
+
+    await callback.message.answer(
+        "🎬 <b>Запит на мультфільм</b>\n\n"
+        "Напишіть який мультфільм або серіал ви хочете побачити у боті.\n"
+        "Вкажіть назву, рік випуску або інші деталі.\n\n"
+        "Адміністратори отримають ваш запит і постараються додати його якнайшвидше!\n\n"
+        "<i>Для скасування натисніть /menu</i>"
+    )
+
+
+@router.message(HelpStates.waiting_for_request, ~F.text.startswith("/"))
+async def process_help_request(message: Message, state: FSMContext, bot: Bot):
+    """Обробник запиту на мультфільм"""
+
+    user_request = message.text.strip()
+
+    if not user_request:
+        await message.answer("❌ Введіть ваш запит")
+        return
+
+    # Формуємо повідомлення для адмінів
+    user = message.from_user
+    username = f"@{user.username}" if user.username else "немає username"
+
+    admin_message = (
+        f"🎬 <b>Новий запит на мультфільм!</b>\n\n"
+        f"👤 <b>Від користувача:</b>\n"
+        f"ID: <code>{user.id}</code>\n"
+        f"Ім'я: {user.first_name or 'немає'}"
+    )
+
+    if user.last_name:
+        admin_message += f" {user.last_name}"
+
+    admin_message += f"\nUsername: {username}\n\n"
+    admin_message += f"📝 <b>Запит:</b>\n{user_request}"
+
+    # Надсилаємо повідомлення всім адмінам
+    sent_count = 0
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, admin_message)
+            sent_count += 1
+        except Exception as e:
+            import logging
+            logging.error(f"Failed to send request to admin {admin_id}: {e}")
+
+    # Очищаємо стан
+    await state.clear()
+
+    if sent_count > 0:
+        await message.answer(
+            "✅ <b>Запит надіслано!</b>\n\n"
+            "Дякуємо за ваш запит! Адміністратори отримали його і постараються додати "
+            "мультфільм якнайшвидше.\n\n"
+            "Повернутися до /menu"
+        )
+    else:
+        await message.answer(
+            "❌ <b>Помилка</b>\n\n"
+            "На жаль, не вдалося надіслати запит адміністраторам. Спробуйте пізніше.\n\n"
+            "Повернутися до /menu"
+        )
+
+
+@router.callback_query(F.data == "help:contact")
+async def help_contact_callback(callback: CallbackQuery, state: FSMContext):
+    """Обробник кнопки 'Зв'язок з адміном'"""
+    await callback.answer()
+
+    await state.set_state(HelpStates.waiting_for_message)
+
+    await callback.message.answer(
+        "💬 <b>Зв'язок з адміном</b>\n\n"
+        "Напишіть ваше повідомлення адміністратору.\n"
+        "Це може бути питання, пропозиція або повідомлення про помилку.\n\n"
+        "Адміністратори отримають ваше повідомлення і зв'яжуться з вами найближчим часом!\n\n"
+        "<i>Для скасування натисніть /menu</i>"
+    )
+
+
+@router.message(HelpStates.waiting_for_message, ~F.text.startswith("/"))
+async def process_help_message(message: Message, state: FSMContext, bot: Bot):
+    """Обробник повідомлення адміну"""
+
+    user_message = message.text.strip()
+
+    if not user_message:
+        await message.answer("❌ Введіть ваше повідомлення")
+        return
+
+    # Формуємо повідомлення для адмінів
+    user = message.from_user
+    username = f"@{user.username}" if user.username else "немає username"
+
+    admin_message = (
+        f"💬 <b>Нове повідомлення від користувача!</b>\n\n"
+        f"👤 <b>Від:</b>\n"
+        f"ID: <code>{user.id}</code>\n"
+        f"Ім'я: {user.first_name or 'немає'}"
+    )
+
+    if user.last_name:
+        admin_message += f" {user.last_name}"
+
+    admin_message += f"\nUsername: {username}\n\n"
+    admin_message += f"📩 <b>Повідомлення:</b>\n{user_message}"
+
+    # Надсилаємо повідомлення всім адмінам
+    sent_count = 0
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, admin_message)
+            sent_count += 1
+        except Exception as e:
+            import logging
+            logging.error(f"Failed to send message to admin {admin_id}: {e}")
+
+    # Очищаємо стан
+    await state.clear()
+
+    if sent_count > 0:
+        await message.answer(
+            "✅ <b>Повідомлення надіслано!</b>\n\n"
+            "Дякуємо за ваше повідомлення! Адміністратори отримали його і зв'яжуться з вами "
+            "найближчим часом.\n\n"
+            "Повернутися до /menu"
+        )
+    else:
+        await message.answer(
+            "❌ <b>Помилка</b>\n\n"
+            "На жаль, не вдалося надіслати повідомлення адміністраторам. Спробуйте пізніше.\n\n"
+            "Повернутися до /menu"
+        )

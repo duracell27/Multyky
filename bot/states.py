@@ -64,3 +64,9 @@ class AddSuperBatchMovieStates(StatesGroup):
     waiting_for_new_series_poster = State()  # Чекаємо постер
     # Додавання епізодів (автоматично визначаємо сезон і епізод з caption)
     waiting_for_videos = State()  # Чекаємо переслані відео з каналу
+
+
+class HelpStates(StatesGroup):
+    """Стани для допомоги користувачам"""
+    waiting_for_request = State()  # Чекаємо запит на мультфільм
+    waiting_for_message = State()  # Чекаємо повідомлення адміну

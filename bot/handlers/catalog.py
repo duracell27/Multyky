@@ -61,14 +61,14 @@ async def create_series_poster_buttons(series_id: str, user_id: int) -> InlineKe
 
 
 @router.message(Command("catalog"))
-async def cmd_catalog(message: Message, state: FSMContext):
+async def cmd_catalog(message: Message, state: FSMContext, bot: Bot):
     """Показати каталог мультфільмів і серіалів"""
 
     # Очищаємо стан (наприклад, якщо користувач був у пошуку)
     await state.clear()
 
     # Автоматично оновлюємо активність
-    await get_or_create_user(message.from_user)
+    await get_or_create_user(message.from_user, bot)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
