@@ -82,8 +82,9 @@ async def get_or_create_user(user: User, bot: Optional[Bot] = None) -> dict:
     new_user = await create_user(user)
 
     # Надсилаємо повідомлення адмінам про нову реєстрацію
-    if bot:
-        await notify_admins_about_new_user(bot, user)
+    # ВИМКНЕНО: замість миттєвих сповіщень, тепер відправляємо щоденний звіт о 22:00
+    # if bot:
+    #     await notify_admins_about_new_user(bot, user)
 
     return new_user
 
@@ -240,3 +241,102 @@ async def get_watched_movies(user_id: int) -> list:
     if user and "watched_movies" in user:
         return user["watched_movies"]
     return []
+
+
+async def get_new_users_count_for_date(date: datetime) -> int:
+    """Отримати кількість нових користувачів за конкретну дату"""
+    from datetime import timedelta
+
+    # Визначаємо початок та кінець дня
+    start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = start_of_day + timedelta(days=1)
+
+    # Підраховуємо користувачів, зареєстрованих в цей день
+    count = await db.users.count_documents({
+        "registered_at": {
+            "$gte": start_of_day,
+            "$lt": end_of_day
+        }
+    })
+
+    return count
+
+
+async def get_new_users_for_date(date: datetime) -> list:
+    """Отримати список нових користувачів за конкретну дату"""
+    from datetime import timedelta
+
+    # Визначаємо початок та кінець дня
+    start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = start_of_day + timedelta(days=1)
+
+    # Отримуємо користувачів, зареєстрованих в цей день
+    cursor = db.users.find({
+        "registered_at": {
+            "$gte": start_of_day,
+            "$lt": end_of_day
+        }
+    })
+
+    return await cursor.to_list(length=None)
+
+
+async def send_daily_registration_report(bot: Bot):
+    """Відправити щоденний звіт про реєстрації адміністраторам"""
+    from datetime import datetime, timedelta
+
+    # Отримуємо вчорашню дату (звіт за попередній день)
+    yesterday = datetime.utcnow() - timedelta(days=1)
+
+    # Отримуємо кількість та список нових користувачів за вчора
+    new_users_count = await get_new_users_count_for_date(yesterday)
+
+    if new_users_count == 0:
+        # Якщо немає нових користувачів, не відправляємо звіт
+        # (або можна відправити повідомлення про те, що нових немає)
+        message = (
+            f"📊 <b>Щоденний звіт про реєстрації</b>\n\n"
+            f"📅 Дата: {yesterday.strftime('%d.%m.%Y')}\n\n"
+            f"👥 Нових користувачів: <b>0</b>\n\n"
+            f"<i>Вчора не було нових реєстрацій</i>"
+        )
+    else:
+        # Отримуємо детальний список нових користувачів
+        new_users = await get_new_users_for_date(yesterday)
+
+        message = (
+            f"📊 <b>Щоденний звіт про реєстрації</b>\n\n"
+            f"📅 Дата: {yesterday.strftime('%d.%m.%Y')}\n\n"
+            f"👥 Нових користувачів: <b>{new_users_count}</b>\n\n"
+        )
+
+        # Додаємо інформацію про кожного нового користувача (максимум 20)
+        if new_users_count <= 20:
+            message += "<b>Список нових користувачів:</b>\n\n"
+            for i, user in enumerate(new_users, 1):
+                username = f"@{user.get('username')}" if user.get('username') else "немає username"
+                first_name = user.get('first_name', 'немає')
+                user_id = user.get('user_id')
+                is_premium = "⭐️" if user.get('is_premium') else ""
+
+                message += f"{i}. {first_name} {is_premium}\n"
+                message += f"   ID: <code>{user_id}</code>\n"
+                message += f"   Username: {username}\n\n"
+        else:
+            message += f"<i>Показано перші 20 з {new_users_count} користувачів:</i>\n\n"
+            for i, user in enumerate(new_users[:20], 1):
+                username = f"@{user.get('username')}" if user.get('username') else "немає username"
+                first_name = user.get('first_name', 'немає')
+                user_id = user.get('user_id')
+                is_premium = "⭐️" if user.get('is_premium') else ""
+
+                message += f"{i}. {first_name} {is_premium}\n"
+                message += f"   ID: <code>{user_id}</code>\n"
+                message += f"   Username: {username}\n\n"
+
+    # Надсилаємо звіт всім адміністраторам
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, message)
+        except Exception as e:
+            logging.error(f"Failed to send daily report to admin {admin_id}: {e}")

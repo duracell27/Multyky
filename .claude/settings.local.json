@@ -11,7 +11,9 @@
       "Bash(killall:*)",
       "Bash(python3:*)",
       "Bash(find:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(pip install:*)",
+      "Bash(./venv/bin/python3:*)"
     ],
     "deny": [],
     "ask": []
