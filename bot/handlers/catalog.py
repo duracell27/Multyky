@@ -15,7 +15,9 @@ from bot.database.movies import (
     increment_views,
     toggle_like,
     toggle_dislike,
-    get_user_vote
+    get_user_vote,
+    get_grouped_movies,
+    get_movies_by_series_name
 )
 from bot.database.users import (
     get_or_create_user,
@@ -86,19 +88,34 @@ async def cmd_catalog(message: Message, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data == "catalog:movies")
 async def show_movies(callback: CallbackQuery):
-    """Показати список фільмів"""
+    """Показати список фільмів (згруповані за серіями)"""
 
-    movies = await get_all_movies_list()
+    grouped_data = await get_grouped_movies()
+    grouped = grouped_data["grouped"]
+    standalone = grouped_data["standalone"]
 
-    if not movies:
+    if not grouped and not standalone:
         await callback.message.edit_text("📭 Поки що немає доданих мультфільмів.")
         await callback.answer()
         return
 
-    # Створюємо кнопки для кожного фільму (по 1 на рядок)
+    # Створюємо кнопки
     buttons = []
-    for movie in movies:
-        # Використовуємо ID замість назви - набагато коротше
+
+    # Спочатку показуємо групи (серії фільмів)
+    for series_name in sorted(grouped.keys()):
+        movies_in_series = grouped[series_name]
+        count = len(movies_in_series)
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📁 {series_name} ({count} {'фільм' if count == 1 else 'фільми' if count < 5 else 'фільмів'})",
+                callback_data=f"series_movies:{series_name}"
+            )
+        ])
+
+    # Потім окремі фільми
+    for movie in standalone:
         movie_id = str(movie["_id"])
 
         # Перевіряємо чи фільм переглянутий
@@ -121,6 +138,50 @@ async def show_movies(callback: CallbackQuery):
 
     await callback.message.edit_text(
         "🎬 <b>Мультфільми:</b>\n\n"
+        "Виберіть серію або фільм для перегляду:",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("series_movies:"))
+async def show_series_movies(callback: CallbackQuery):
+    """Показати фільми в серії"""
+
+    series_name = callback.data.split(":", 1)[1]
+
+    movies = await get_movies_by_series_name(series_name)
+
+    if not movies:
+        await callback.answer("❌ Фільми не знайдено", show_alert=True)
+        return
+
+    # Створюємо кнопки для фільмів в серії
+    buttons = []
+    for movie in movies:
+        movie_id = str(movie["_id"])
+
+        # Перевіряємо чи фільм переглянутий
+        is_watched = await is_movie_watched(callback.from_user.id, movie_id)
+        watched_emoji = "👁 " if is_watched else ""
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{watched_emoji}🎬 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
+                callback_data=f"m:{movie_id}"
+            )
+        ])
+
+    # Додаємо кнопку "Назад"
+    buttons.append([
+        InlineKeyboardButton(text="◀️ Назад до каталогу", callback_data="catalog:movies")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(
+        f"📁 <b>{series_name}</b>\n\n"
+        f"Всього фільмів: {len(movies)}\n\n"
         "Виберіть фільм для перегляду:",
         reply_markup=keyboard
     )

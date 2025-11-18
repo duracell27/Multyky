@@ -13,7 +13,8 @@ async def create_movie(
     video_type: str,
     added_by: int,
     file_size: int = 0,
-    duration: int = 0
+    duration: int = 0,
+    series_name: str = None
 ) -> dict:
     """
     Створити новий мультфільм
@@ -35,6 +36,10 @@ async def create_movie(
         "rating": 0,
         "ratings": [],
     }
+
+    # Додаємо series_name якщо вказано
+    if series_name:
+        movie_data["series_name"] = series_name
 
     result = await db.videos.insert_one(movie_data)
     movie_data["_id"] = result.inserted_id
@@ -217,15 +222,23 @@ async def get_total_storage_size() -> float:
     return round(total_gb, 2)
 
 
-async def get_all_movies_list() -> list:
+async def get_all_movies_list(include_hidden: bool = False) -> list:
     """Отримати список всіх фільмів"""
-    cursor = db.videos.find({"content_type": "movie"}).sort("title", 1)
+    query = {"content_type": "movie"}
+    if not include_hidden:
+        query["is_hidden"] = {"$ne": True}
+
+    cursor = db.videos.find(query).sort("title", 1)
     return await cursor.to_list(length=None)
 
 
-async def get_all_series_list() -> list:
+async def get_all_series_list(include_hidden: bool = False) -> list:
     """Отримати список всіх серіалів"""
-    cursor = db.videos.find({"content_type": "series"}).sort("title", 1)
+    query = {"content_type": "series"}
+    if not include_hidden:
+        query["is_hidden"] = {"$ne": True}
+
+    cursor = db.videos.find(query).sort("title", 1)
     return await cursor.to_list(length=None)
 
 
@@ -286,14 +299,19 @@ async def get_season_episodes(series_id: str, season: int) -> dict:
     return episodes
 
 
-async def search_content(query: str) -> list:
+async def search_content(query: str, include_hidden: bool = False) -> list:
     """Пошук мультфільмів і серіалів за назвою"""
-    cursor = db.videos.find({
+    search_filter = {
         "$or": [
             {"title": {"$regex": query, "$options": "i"}},
             {"title_en": {"$regex": query, "$options": "i"}}
         ]
-    })
+    }
+
+    if not include_hidden:
+        search_filter["is_hidden"] = {"$ne": True}
+
+    cursor = db.videos.find(search_filter)
     return await cursor.to_list(length=None)
 
 
@@ -573,3 +591,140 @@ async def update_episode_video(series_id: str, season: int, episode: int, video_
         }
     )
     return result.modified_count > 0
+
+
+# ===============================================
+# Приховування/показування контенту
+# ===============================================
+
+async def hide_content(content_id: str) -> bool:
+    """Приховати мультфільм або серіал"""
+    from bson import ObjectId
+
+    result = await db.videos.update_one(
+        {"_id": ObjectId(content_id)},
+        {"$set": {"is_hidden": True}}
+    )
+    return result.modified_count > 0
+
+
+async def show_content(content_id: str) -> bool:
+    """Показати мультфільм або серіал"""
+    from bson import ObjectId
+
+    result = await db.videos.update_one(
+        {"_id": ObjectId(content_id)},
+        {"$set": {"is_hidden": False}}
+    )
+    return result.modified_count > 0
+
+
+async def toggle_content_visibility(content_id: str) -> dict:
+    """
+    Перемикач видимості контенту
+    Returns: {"is_hidden": bool, "title": str}
+    """
+    from bson import ObjectId
+
+    content = await get_movie_by_id(content_id)
+    if not content:
+        return None
+
+    # Визначаємо поточний стан (якщо поля немає - контент видимий)
+    is_hidden = content.get("is_hidden", False)
+    new_state = not is_hidden
+
+    # Оновлюємо стан
+    await db.videos.update_one(
+        {"_id": ObjectId(content_id)},
+        {"$set": {"is_hidden": new_state}}
+    )
+
+    return {
+        "is_hidden": new_state,
+        "title": content.get("title", "")
+    }
+
+
+# ===============================================
+# Робота з серіями фільмів (групування)
+# ===============================================
+
+async def get_all_movie_series_names() -> list:
+    """Отримати всі унікальні назви серій фільмів"""
+    pipeline = [
+        {"$match": {"content_type": "movie", "series_name": {"$exists": True, "$ne": None}}},
+        {"$group": {"_id": "$series_name"}},
+        {"$sort": {"_id": 1}}
+    ]
+
+    result = await db.videos.aggregate(pipeline).to_list(length=None)
+    return [item["_id"] for item in result]
+
+
+async def search_movie_series_names(query: str) -> list:
+    """Пошук схожих назв серій фільмів"""
+    pipeline = [
+        {
+            "$match": {
+                "content_type": "movie",
+                "series_name": {
+                    "$exists": True,
+                    "$ne": None,
+                    "$regex": query,
+                    "$options": "i"
+                }
+            }
+        },
+        {"$group": {"_id": "$series_name"}},
+        {"$sort": {"_id": 1}}
+    ]
+
+    result = await db.videos.aggregate(pipeline).to_list(length=None)
+    return [item["_id"] for item in result]
+
+
+async def get_movies_by_series_name(series_name: str, include_hidden: bool = False) -> list:
+    """Отримати всі фільми за назвою серії"""
+    query = {"content_type": "movie", "series_name": series_name}
+    if not include_hidden:
+        query["is_hidden"] = {"$ne": True}
+
+    cursor = db.videos.find(query).sort("year", 1)
+    return await cursor.to_list(length=None)
+
+
+async def get_grouped_movies(include_hidden: bool = False) -> dict:
+    """
+    Отримати фільми, згруповані за series_name
+    Returns: {
+        "grouped": {series_name: [movies]},
+        "standalone": [movies without series_name]
+    }
+    """
+    query = {"content_type": "movie"}
+    if not include_hidden:
+        query["is_hidden"] = {"$ne": True}
+
+    all_movies = await db.videos.find(query).sort("title", 1).to_list(length=None)
+
+    grouped = {}
+    standalone = []
+
+    for movie in all_movies:
+        series_name = movie.get("series_name")
+        if series_name:
+            if series_name not in grouped:
+                grouped[series_name] = []
+            grouped[series_name].append(movie)
+        else:
+            standalone.append(movie)
+
+    # Сортуємо фільми в кожній групі за роком
+    for series_name in grouped:
+        grouped[series_name].sort(key=lambda m: m.get("year", 0))
+
+    return {
+        "grouped": grouped,
+        "standalone": standalone
+    }

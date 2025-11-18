@@ -23,7 +23,10 @@ from bot.database.movies import (
     delete_season,
     delete_episode,
     update_movie_field,
-    update_episode_video
+    update_episode_video,
+    toggle_content_visibility,
+    search_movie_series_names,
+    get_all_movie_series_names
 )
 from bot.database.users import update_last_series_added
 
@@ -62,11 +65,106 @@ async def process_movie_title(message: Message, state: FSMContext):
     title = message.text.strip()
 
     await state.update_data(title=title)
-    await message.answer(
-        f"✅ Назва: <b>{title}</b>\n\n"
-        "Введіть англійську назву фільму:"
-    )
+
+    # Шукаємо схожі серії фільмів за назвою
+    similar_series = await search_movie_series_names(title)
+
+    buttons = []
+
+    # Додаємо знайдені схожі серії (максимум 10)
+    for series_name in similar_series[:10]:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📁 {series_name}",
+                callback_data=f"select_series:{series_name}"
+            )
+        ])
+
+    # Додаємо варіанти створити нову серію або окремий фільм
+    buttons.append([
+        InlineKeyboardButton(
+            text="➕ Створити нову серію",
+            callback_data="select_series:new"
+        )
+    ])
+    buttons.append([
+        InlineKeyboardButton(
+            text="🎬 Окремий фільм (без серії)",
+            callback_data="select_series:standalone"
+        )
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    if similar_series:
+        await message.answer(
+            f"✅ Назва: <b>{title}</b>\n\n"
+            f"🔍 Знайдено схожі серії фільмів. Оберіть серію або створіть нову:",
+            reply_markup=keyboard
+        )
+    else:
+        await message.answer(
+            f"✅ Назва: <b>{title}</b>\n\n"
+            f"Оберіть опцію:",
+            reply_markup=keyboard
+        )
+
+    await state.set_state(AddMovieStates.choosing_series)
+
+
+@router.callback_query(AddMovieStates.choosing_series, F.data.startswith("select_series:"))
+async def process_series_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору серії фільмів"""
+    series_choice = callback.data.split(":", 1)[1]
+
+    if series_choice == "standalone":
+        # Фільм без серії
+        await state.update_data(series_name=None)
+        await callback.message.edit_text(
+            "✅ Фільм буде доданий як окремий (без серії)\n\n"
+            "Введіть англійську назву фільму:"
+        )
+    elif series_choice == "new":
+        # Створюємо нову серію - запитуємо назву
+        await callback.message.edit_text(
+            "➕ <b>Створення нової серії</b>\n\n"
+            "Введіть назву серії фільмів (наприклад: <code>Шрек</code>, <code>Мадагаскар</code>):"
+        )
+        # Залишаємося в тому ж стані, чекаємо текст
+        await state.update_data(awaiting_new_series_name=True)
+        await callback.answer()
+        return
+    else:
+        # Вибрано існуючу серію
+        await state.update_data(series_name=series_choice)
+        await callback.message.edit_text(
+            f"✅ Серія: <b>{series_choice}</b>\n\n"
+            "Введіть англійську назву фільму:"
+        )
+
     await state.set_state(AddMovieStates.waiting_for_title_en)
+    await callback.answer()
+
+
+@router.message(AddMovieStates.choosing_series, ~F.text.startswith("/"))
+async def process_new_series_name(message: Message, state: FSMContext):
+    """Обробка введення назви нової серії"""
+    data = await state.get_data()
+
+    # Перевіряємо чи ми чекаємо назву нової серії
+    if data.get("awaiting_new_series_name"):
+        series_name = message.text.strip()
+        await state.update_data(series_name=series_name, awaiting_new_series_name=False)
+
+        await message.answer(
+            f"✅ Нова серія: <b>{series_name}</b>\n\n"
+            "Введіть англійську назву фільму:"
+        )
+        await state.set_state(AddMovieStates.waiting_for_title_en)
+    else:
+        await message.answer(
+            "❌ Будь ласка, виберіть опцію за допомогою кнопок вище."
+        )
 
 
 @router.message(AddMovieStates.waiting_for_title_en, ~F.text.startswith("/"))
@@ -186,14 +284,20 @@ async def process_movie_video(message: Message, state: FSMContext):
             video_type=video_type,
             added_by=message.from_user.id,
             file_size=file_size,
-            duration=duration
+            duration=duration,
+            series_name=data.get("series_name")
         )
 
         movie_id = str(movie["_id"])
 
+        series_info = ""
+        if data.get("series_name"):
+            series_info = f"📁 Серія: {data['series_name']}\n"
+
         await message.answer(
             f"✅ <b>Фільм успішно додано!</b>\n\n"
             f"🎬 <b>{data['title']}</b>\n"
+            f"{series_info}"
             f"📅 Рік: {data['year']}\n"
             f"⭐️ IMDB: {data['imdb']}\n"
             f"🆔 ID: <code>{movie_id}</code>\n\n"
@@ -229,8 +333,8 @@ async def cmd_add_batch_movie(message: Message, state: FSMContext):
         await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
         return
 
-    # Отримуємо список серіалів
-    series_list = await get_all_series_list()
+    # Отримуємо список серіалів (включно з прихованими для адмінів)
+    series_list = await get_all_series_list(include_hidden=True)
 
     # Створюємо кнопки для вибору серіалу (тільки назва)
     buttons = []
@@ -676,7 +780,6 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
 
         # Додаємо серію в базу
         try:
-            status_msg = await message.answer(f"⏳ Додаю серію {episode_num} в базу...")
             await add_episode_to_series(
                 series_id=series_id,
                 season=expected_season,
@@ -686,7 +789,6 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
                 file_size=file_size,
                 duration=duration
             )
-            await status_msg.delete()
             logging.info(f"Episode {episode_num} added to database from forwarded video (size: {file_size} bytes)")
         except Exception as e:
             logging.error(f"Error saving episode {episode_num}: {str(e)}")
@@ -706,10 +808,12 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
 
         # Перевіряємо чи всі відео отримані
         if current_count < episodes_count:
-            await message.answer(
-                f"✅ Серія {episode_num} додана ({current_count}/{episodes_count})\n\n"
-                f"📤 Очікую ще <b>{episodes_count - current_count}</b> відео"
-            )
+            # Відправляємо прогрес тільки кожні 5 серій або при першій серії (щоб уникнути rate limit)
+            if current_count == 1 or current_count % 5 == 0:
+                await message.answer(
+                    f"📊 <b>Прогрес:</b> {current_count}/{episodes_count} серій додано\n\n"
+                    f"📤 Очікую ще <b>{episodes_count - current_count}</b> відео"
+                )
         elif current_count == episodes_count:
             # Всі відео отримані
             await update_last_series_added(message.from_user.id, data.get("title"))
@@ -750,8 +854,8 @@ async def cmd_add_super_batch_movie(message: Message, state: FSMContext):
         await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
         return
 
-    # Отримуємо список серіалів
-    series_list = await get_all_series_list()
+    # Отримуємо список серіалів (включно з прихованими для адмінів)
+    series_list = await get_all_series_list(include_hidden=True)
 
     # Створюємо кнопки для вибору серіалу
     buttons = []
@@ -1052,7 +1156,6 @@ async def process_super_batch_videos(message: Message, state: FSMContext, bot: B
 
         # Додаємо серію в базу
         try:
-            status_msg = await message.answer(f"⏳ Додаю серію S{season}E{episode_num} в базу...")
             await add_episode_to_series(
                 series_id=series_id,
                 season=season,
@@ -1062,7 +1165,6 @@ async def process_super_batch_videos(message: Message, state: FSMContext, bot: B
                 file_size=file_size,
                 duration=duration
             )
-            await status_msg.delete()
             logging.info(f"Episode S{season}E{episode_num} added to database in super batch mode (size: {file_size} bytes)")
         except Exception as e:
             logging.error(f"Error saving episode S{season}E{episode_num}: {str(e)}")
@@ -1077,28 +1179,29 @@ async def process_super_batch_videos(message: Message, state: FSMContext, bot: B
 
         current_count = len(received_videos)
 
-        # Групуємо серії по сезонах
-        seasons_summary = {}
-        for key in received_videos.keys():
-            s, e = key.split(":")
-            if s not in seasons_summary:
-                seasons_summary[s] = []
-            seasons_summary[s].append(int(e))
+        # Відправляємо прогрес тільки кожні 10 серій (щоб уникнути rate limit)
+        if current_count % 10 == 0:
+            # Групуємо серії по сезонах
+            seasons_summary = {}
+            for key in received_videos.keys():
+                s, e = key.split(":")
+                if s not in seasons_summary:
+                    seasons_summary[s] = []
+                seasons_summary[s].append(int(e))
 
-        # Формуємо повідомлення про додані серії
-        summary_lines = []
-        for s in sorted(seasons_summary.keys(), key=int):
-            episodes = sorted(seasons_summary[s])
-            summary_lines.append(f"   Сезон {s}: {len(episodes)} серій ({', '.join(map(str, episodes))})")
+            # Формуємо повідомлення про додані серії
+            summary_lines = []
+            for s in sorted(seasons_summary.keys(), key=int):
+                episodes = sorted(seasons_summary[s])
+                summary_lines.append(f"   Сезон {s}: {len(episodes)} серій")
 
-        summary_text = "\n".join(summary_lines)
+            summary_text = "\n".join(summary_lines)
 
-        await message.answer(
-            f"✅ <b>Серія S{season}E{episode_num} додана!</b>\n\n"
-            f"📊 <b>Всього додано в цій сесії: {current_count}</b>\n\n"
-            f"{summary_text}\n\n"
-            f"📤 Продовжуйте надсилати відео або надішліть <code>готово</code> для завершення"
-        )
+            await message.answer(
+                f"📊 <b>Прогрес: {current_count} серій додано</b>\n\n"
+                f"{summary_text}\n\n"
+                f"📤 Продовжуйте надсилати відео або надішліть <code>готово</code> для завершення"
+            )
 
 
 @router.message(AddSuperBatchMovieStates.waiting_for_videos, F.text.regexp(r"(?i)^(готово|done|/done)$"))
@@ -1211,8 +1314,8 @@ async def process_delete_type(callback: CallbackQuery, state: FSMContext):
     await state.update_data(delete_content_type=content_type)
 
     if content_type == "movie":
-        # Отримуємо список фільмів
-        movies_list = await get_all_movies_list()
+        # Отримуємо список фільмів (включно з прихованими для адмінів)
+        movies_list = await get_all_movies_list(include_hidden=True)
 
         if not movies_list:
             await callback.message.edit_text("❌ Немає фільмів для видалення.")
@@ -1224,9 +1327,11 @@ async def process_delete_type(callback: CallbackQuery, state: FSMContext):
         buttons = []
         for movie in movies_list[:20]:  # Обмежуємо до 20 для уникнення великих меню
             movie_id = str(movie["_id"])
+            is_hidden = movie.get("is_hidden", False)
+            hidden_emoji = "🔒 " if is_hidden else ""
             buttons.append([
                 InlineKeyboardButton(
-                    text=f"🎬 {movie['title']} ({movie['year']})",
+                    text=f"{hidden_emoji}🎬 {movie['title']} ({movie['year']})",
                     callback_data=f"delmovie:{movie_id}"
                 )
             ])
@@ -1244,8 +1349,8 @@ async def process_delete_type(callback: CallbackQuery, state: FSMContext):
         await state.set_state(DeleteContentStates.choosing_content)
 
     elif content_type == "series":
-        # Отримуємо список серіалів
-        series_list = await get_all_series_list()
+        # Отримуємо список серіалів (включно з прихованими для адмінів)
+        series_list = await get_all_series_list(include_hidden=True)
 
         if not series_list:
             await callback.message.edit_text("❌ Немає серіалів для видалення.")
@@ -1257,9 +1362,11 @@ async def process_delete_type(callback: CallbackQuery, state: FSMContext):
         buttons = []
         for series in series_list[:20]:
             series_id = str(series["_id"])
+            is_hidden = series.get("is_hidden", False)
+            hidden_emoji = "🔒 " if is_hidden else ""
             buttons.append([
                 InlineKeyboardButton(
-                    text=f"📺 {series['title']}",
+                    text=f"{hidden_emoji}📺 {series['title']}",
                     callback_data=f"delseries:{series_id}"
                 )
             ])
@@ -1714,8 +1821,8 @@ async def process_edit_type(callback: CallbackQuery, state: FSMContext):
     await state.update_data(edit_content_type=content_type)
 
     if content_type == "movie":
-        # Отримуємо список фільмів
-        movies_list = await get_all_movies_list()
+        # Отримуємо список фільмів (включно з прихованими для адмінів)
+        movies_list = await get_all_movies_list(include_hidden=True)
 
         if not movies_list:
             await callback.message.edit_text("❌ Немає фільмів для редагування.")
@@ -1727,9 +1834,11 @@ async def process_edit_type(callback: CallbackQuery, state: FSMContext):
         buttons = []
         for movie in movies_list[:20]:
             movie_id = str(movie["_id"])
+            is_hidden = movie.get("is_hidden", False)
+            hidden_emoji = "🔒 " if is_hidden else ""
             buttons.append([
                 InlineKeyboardButton(
-                    text=f"🎬 {movie['title']} ({movie['year']})",
+                    text=f"{hidden_emoji}🎬 {movie['title']} ({movie['year']})",
                     callback_data=f"editmovie:{movie_id}"
                 )
             ])
@@ -1747,8 +1856,8 @@ async def process_edit_type(callback: CallbackQuery, state: FSMContext):
         await state.set_state(EditContentStates.choosing_content)
 
     elif content_type == "series":
-        # Отримуємо список серіалів
-        series_list = await get_all_series_list()
+        # Отримуємо список серіалів (включно з прихованими для адмінів)
+        series_list = await get_all_series_list(include_hidden=True)
 
         if not series_list:
             await callback.message.edit_text("❌ Немає серіалів для редагування.")
@@ -1760,9 +1869,11 @@ async def process_edit_type(callback: CallbackQuery, state: FSMContext):
         buttons = []
         for series in series_list[:20]:
             series_id = str(series["_id"])
+            is_hidden = series.get("is_hidden", False)
+            hidden_emoji = "🔒 " if is_hidden else ""
             buttons.append([
                 InlineKeyboardButton(
-                    text=f"📺 {series['title']}",
+                    text=f"{hidden_emoji}📺 {series['title']}",
                     callback_data=f"editseries:{series_id}"
                 )
             ])
@@ -1818,15 +1929,22 @@ async def process_edit_content_selection(callback: CallbackQuery, state: FSMCont
     else:  # series
         buttons.append([InlineKeyboardButton(text="📺 Замінити серію", callback_data=f"editfield:episode_video:{content_id}")])
 
+    # Додаємо кнопку приховування/показування
+    is_hidden = content.get("is_hidden", False)
+    visibility_text = "👁 Показати" if is_hidden else "🔒 Приховати"
+    buttons.append([InlineKeyboardButton(text=visibility_text, callback_data=f"toggle_visibility:{content_id}")])
+
     buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="editfield:cancel")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
+    visibility_status = "🔒 <b>ПРИХОВАНИЙ</b>" if is_hidden else "👁 Видимий"
     await callback.message.edit_text(
         f"✏️ <b>Редагування:</b>\n\n"
         f"{'🎬' if content['content_type'] == 'movie' else '📺'} <b>{content['title']}</b>\n"
         f"Англійська назва: {content['title_en']}\n"
         f"📅 Рік: {content['year']}\n"
-        f"⭐️ IMDB: {content['imdb_rating']}\n\n"
+        f"⭐️ IMDB: {content['imdb_rating']}\n"
+        f"Статус: {visibility_status}\n\n"
         f"Оберіть поле для редагування:",
         reply_markup=keyboard
     )
@@ -2201,3 +2319,73 @@ async def process_edit_episode_video_invalid(message: Message, state: FSMContext
         "❌ Будь ласка, переслати відео файл з каналу зберігання.\n\n"
         "Якщо хочете скасувати, введіть /cancel"
     )
+
+
+# ===============================================
+# Управління видимістю контенту
+# ===============================================
+
+@router.callback_query(F.data.startswith("toggle_visibility:"))
+async def toggle_visibility_handler(callback: CallbackQuery, state: FSMContext):
+    """Обробка приховування/показування контенту"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔️ Ця функція доступна тільки для адміністраторів.", show_alert=True)
+        return
+
+    content_id = callback.data.split(":", 1)[1]
+
+    # Перемикаємо видимість
+    result = await toggle_content_visibility(content_id)
+
+    if not result:
+        await callback.answer("❌ Помилка при зміні видимості контенту", show_alert=True)
+        return
+
+    # Отримуємо оновлену інформацію про контент
+    content = await get_movie_by_id(content_id)
+    if not content:
+        await callback.answer("❌ Контент не знайдено", show_alert=True)
+        return
+
+    # Оновлюємо кнопки
+    is_hidden = content.get("is_hidden", False)
+
+    buttons = [
+        [InlineKeyboardButton(text="📝 Українська назва", callback_data=f"editfield:title:{content_id}")],
+        [InlineKeyboardButton(text="🔤 Англійська назва", callback_data=f"editfield:title_en:{content_id}")],
+        [InlineKeyboardButton(text="📅 Рік", callback_data=f"editfield:year:{content_id}")],
+        [InlineKeyboardButton(text="⭐️ IMDB рейтинг", callback_data=f"editfield:imdb_rating:{content_id}")],
+        [InlineKeyboardButton(text="🖼 Замінити постер", callback_data=f"editfield:poster:{content_id}")],
+    ]
+
+    # Додаємо кнопку заміни відео в залежності від типу контенту
+    if content['content_type'] == 'movie':
+        buttons.append([InlineKeyboardButton(text="🎬 Замінити відео", callback_data=f"editfield:video:{content_id}")])
+    else:  # series
+        buttons.append([InlineKeyboardButton(text="📺 Замінити серію", callback_data=f"editfield:episode_video:{content_id}")])
+
+    # Оновлюємо кнопку видимості
+    visibility_text = "👁 Показати" if is_hidden else "🔒 Приховати"
+    buttons.append([InlineKeyboardButton(text=visibility_text, callback_data=f"toggle_visibility:{content_id}")])
+
+    buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="editfield:cancel")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    # Оновлюємо повідомлення
+    visibility_status = "🔒 <b>ПРИХОВАНИЙ</b>" if is_hidden else "👁 Видимий"
+    await callback.message.edit_text(
+        f"✏️ <b>Редагування:</b>\n\n"
+        f"{'🎬' if content['content_type'] == 'movie' else '📺'} <b>{content['title']}</b>\n"
+        f"Англійська назва: {content['title_en']}\n"
+        f"📅 Рік: {content['year']}\n"
+        f"⭐️ IMDB: {content['imdb_rating']}\n"
+        f"Статус: {visibility_status}\n\n"
+        f"Оберіть поле для редагування:",
+        reply_markup=keyboard
+    )
+
+    # Показуємо повідомлення користувачу
+    if is_hidden:
+        await callback.answer("🔒 Контент приховано! Він більше не буде показуватись користувачам.")
+    else:
+        await callback.answer("👁 Контент показано! Тепер він видимий для всіх користувачів.")
