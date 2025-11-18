@@ -80,7 +80,13 @@ async def process_movie_title(message: Message, state: FSMContext):
             )
         ])
 
-    # Додаємо варіанти створити нову серію або окремий фільм
+    # Додаємо варіанти вибору, створення або окремого фільму
+    buttons.append([
+        InlineKeyboardButton(
+            text="🔍 Вибрати з усіх серій",
+            callback_data="select_series:browse_all"
+        )
+    ])
     buttons.append([
         InlineKeyboardButton(
             text="➕ Створити нову серію",
@@ -124,6 +130,8 @@ async def process_series_selection(callback: CallbackQuery, state: FSMContext):
             "✅ Фільм буде доданий як окремий (без серії)\n\n"
             "Введіть англійську назву фільму:"
         )
+        await state.set_state(AddMovieStates.waiting_for_title_en)
+        await callback.answer()
     elif series_choice == "new":
         # Створюємо нову серію - запитуємо назву
         await callback.message.edit_text(
@@ -133,7 +141,89 @@ async def process_series_selection(callback: CallbackQuery, state: FSMContext):
         # Залишаємося в тому ж стані, чекаємо текст
         await state.update_data(awaiting_new_series_name=True)
         await callback.answer()
-        return
+    elif series_choice == "browse_all":
+        # Показати всі існуючі серії
+        all_series = await get_all_movie_series_names()
+
+        if not all_series:
+            await callback.answer("📁 Ще немає жодної серії фільмів", show_alert=True)
+            return
+
+        # Зберігаємо список серій у стейті для використання індексів
+        await state.update_data(all_series_list=all_series)
+
+        buttons = []
+        for idx, series_name in enumerate(all_series):
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"📁 {series_name}",
+                    callback_data=f"pickser:{idx}"
+                )
+            ])
+
+        # Кнопка назад
+        buttons.append([
+            InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data="select_series:back"
+            )
+        ])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await callback.message.edit_text(
+            "🔍 <b>Оберіть серію фільмів:</b>",
+            reply_markup=keyboard
+        )
+        await callback.answer()
+    elif series_choice == "back":
+        # Повернутися до початкового меню вибору
+        data = await state.get_data()
+        title = data.get("title", "")
+        similar_series = await search_movie_series_names(title)
+
+        buttons = []
+        for series_name in similar_series[:10]:
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"📁 {series_name}",
+                    callback_data=f"select_series:{series_name}"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="🔍 Вибрати з усіх серій",
+                callback_data="select_series:browse_all"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                text="➕ Створити нову серію",
+                callback_data="select_series:new"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                text="🎬 Окремий фільм (без серії)",
+                callback_data="select_series:standalone"
+            )
+        ])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        if similar_series:
+            await callback.message.edit_text(
+                f"✅ Назва: <b>{title}</b>\n\n"
+                f"🔍 Знайдено схожі серії фільмів. Оберіть серію або створіть нову:",
+                reply_markup=keyboard
+            )
+        else:
+            await callback.message.edit_text(
+                f"✅ Назва: <b>{title}</b>\n\n"
+                f"Оберіть опцію:",
+                reply_markup=keyboard
+            )
+        await callback.answer()
     else:
         # Вибрано існуючу серію
         await state.update_data(series_name=series_choice)
@@ -141,6 +231,29 @@ async def process_series_selection(callback: CallbackQuery, state: FSMContext):
             f"✅ Серія: <b>{series_choice}</b>\n\n"
             "Введіть англійську назву фільму:"
         )
+        await state.set_state(AddMovieStates.waiting_for_title_en)
+        await callback.answer()
+
+
+@router.callback_query(AddMovieStates.choosing_series, F.data.startswith("pickser:"))
+async def process_pick_series(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору серії зі списку всіх серій за індексом"""
+    idx = int(callback.data.split(":", 1)[1])
+
+    data = await state.get_data()
+    all_series_list = data.get("all_series_list", [])
+
+    if idx >= len(all_series_list):
+        await callback.answer("❌ Помилка: серія не знайдена", show_alert=True)
+        return
+
+    series_name = all_series_list[idx]
+    await state.update_data(series_name=series_name)
+
+    await callback.message.edit_text(
+        f"✅ Серія: <b>{series_name}</b>\n\n"
+        "Введіть англійську назву фільму:"
+    )
 
     await state.set_state(AddMovieStates.waiting_for_title_en)
     await callback.answer()
