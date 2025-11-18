@@ -18,6 +18,7 @@ from bot.database.movies import (
     get_total_videos_count,
     get_total_views_count,
     get_total_storage_size,
+    get_top_content_by_views,
     search_content
 )
 from bot.config import config
@@ -144,6 +145,18 @@ async def cmd_stats(message: Message):
     total_videos_count = await get_total_videos_count()
     total_views_count = await get_total_views_count()
     total_storage_gb = await get_total_storage_size()
+    top_content = await get_top_content_by_views(5)
+
+    # Формуємо текст топ-5
+    top_text = ""
+    if top_content:
+        for idx, content in enumerate(top_content, 1):
+            title = content.get("title", "Без назви")
+            views = content.get("views_count", 0)
+            content_type = "🎬" if content.get("content_type") == "movie" else "📺"
+            top_text += f"   {idx}. {content_type} {title} - {views} переглядів\n"
+    else:
+        top_text = "   Немає даних\n"
 
     stats_text = (
         "📊 <b>Статистика бота:</b>\n\n"
@@ -156,6 +169,8 @@ async def cmd_stats(message: Message):
         f"   • Всього відео: {total_videos_count}\n\n"
         "📊 <b>Перегляди:</b>\n"
         f"   • Всього переглядів: {total_views_count}\n\n"
+        "🏆 <b>Топ-5 по переглядах:</b>\n"
+        f"{top_text}\n"
         "💾 <b>Сховище:</b>\n"
         f"   • Загальний розмір: {total_storage_gb} ГБ\n\n"
         f"<i>Статистика оновлюється в реальному часі</i>"

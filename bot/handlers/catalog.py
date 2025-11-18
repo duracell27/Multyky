@@ -444,8 +444,8 @@ async def send_episode(callback: CallbackQuery, bot: Bot):
         await callback.answer("❌ Серіал не знайдено", show_alert=True)
         return
 
-    # Збільшуємо лічільник переглядів серіалу
-    await increment_views(series_id)
+    # Збільшуємо лічільник переглядів серіалу (не рахуємо адмінів)
+    await increment_views(series_id, callback.from_user.id)
 
     # Додаємо в історію перегляду (зберігаємо епізод з інформацією про сезон)
     episode_data = {
@@ -526,8 +526,8 @@ async def send_movie(callback: CallbackQuery, bot: Bot):
         await callback.answer("❌ Фільм не знайдено", show_alert=True)
         return
 
-    # Збільшуємо лічільник переглядів
-    await increment_views(movie_id)
+    # Збільшуємо лічільник переглядів (не рахуємо адмінів)
+    await increment_views(movie_id, callback.from_user.id)
 
     # Додаємо в історію перегляду
     await add_to_watch_history(callback.from_user.id, movie_id, movie)

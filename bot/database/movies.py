@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 from bot.database import db
+from bot import config
 
 
 async def create_movie(
@@ -191,6 +192,15 @@ async def get_total_views_count() -> int:
     return 0
 
 
+async def get_top_content_by_views(limit: int = 5) -> list:
+    """Отримати топ контенту по переглядах"""
+    cursor = db.videos.find(
+        {"is_hidden": {"$ne": True}}
+    ).sort("views_count", -1).limit(limit)
+
+    return await cursor.to_list(length=limit)
+
+
 async def get_total_storage_size() -> float:
     """
     Отримати загальний розмір всіх відео в гігабайтах
@@ -315,8 +325,12 @@ async def search_content(query: str, include_hidden: bool = False) -> list:
     return await cursor.to_list(length=None)
 
 
-async def increment_views(content_id: str):
-    """Збільшити лічильник переглядів"""
+async def increment_views(content_id: str, user_id: int = None):
+    """Збільшити лічильник переглядів (не рахує перегляди адмінів)"""
+    # Не рахуємо перегляди від адмінів
+    if user_id and user_id in config.ADMIN_IDS:
+        return
+
     from bson import ObjectId
     await db.videos.update_one(
         {"_id": ObjectId(content_id)},

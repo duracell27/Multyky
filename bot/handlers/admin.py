@@ -1926,6 +1926,8 @@ async def process_edit_content_selection(callback: CallbackQuery, state: FSMCont
     # Додаємо кнопку заміни відео в залежності від типу контенту
     if content['content_type'] == 'movie':
         buttons.append([InlineKeyboardButton(text="🎬 Замінити відео", callback_data=f"editfield:video:{content_id}")])
+        # Додаємо кнопку серії фільмів тільки для фільмів
+        buttons.append([InlineKeyboardButton(text="📁 Серія фільмів", callback_data=f"editfield:series_name:{content_id}")])
     else:  # series
         buttons.append([InlineKeyboardButton(text="📺 Замінити серію", callback_data=f"editfield:episode_video:{content_id}")])
 
@@ -1938,12 +1940,23 @@ async def process_edit_content_selection(callback: CallbackQuery, state: FSMCont
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     visibility_status = "🔒 <b>ПРИХОВАНИЙ</b>" if is_hidden else "👁 Видимий"
+
+    # Додаємо інформацію про серію якщо є
+    series_info = ""
+    if content['content_type'] == 'movie':
+        series_name = content.get("series_name")
+        if series_name:
+            series_info = f"📁 Серія: {series_name}\n"
+        else:
+            series_info = f"📁 Серія: <i>без серії</i>\n"
+
     await callback.message.edit_text(
         f"✏️ <b>Редагування:</b>\n\n"
         f"{'🎬' if content['content_type'] == 'movie' else '📺'} <b>{content['title']}</b>\n"
         f"Англійська назва: {content['title_en']}\n"
         f"📅 Рік: {content['year']}\n"
         f"⭐️ IMDB: {content['imdb_rating']}\n"
+        f"{series_info}"
         f"Статус: {visibility_status}\n\n"
         f"Оберіть поле для редагування:",
         reply_markup=keyboard
@@ -2022,6 +2035,70 @@ async def process_edit_field_selection(callback: CallbackQuery, state: FSMContex
         await callback.answer()
         return
 
+    # Обробка серії фільмів
+    if field == "series_name":
+        # Отримуємо інформацію про фільм
+        movie = await get_movie_by_id(content_id)
+        if not movie:
+            await callback.answer("❌ Фільм не знайдено", show_alert=True)
+            return
+
+        current_series = movie.get("series_name")
+
+        # Отримуємо всі існуючі серії
+        all_series = await get_all_movie_series_names()
+
+        # Зберігаємо список серій в state для подальшого використання
+        await state.update_data(series_list=all_series)
+
+        buttons = []
+
+        # Кнопки існуючих серій (максимум 10) - використовуємо індекси
+        for idx, series_name in enumerate(all_series[:10]):
+            # Позначаємо поточну серію
+            prefix = "✅ " if series_name == current_series else "📁 "
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"{prefix}{series_name}",
+                    callback_data=f"setseries:{content_id}:{idx}"
+                )
+            ])
+
+        # Кнопки для створення нової серії або видалення
+        buttons.append([
+            InlineKeyboardButton(
+                text="➕ Створити нову серію",
+                callback_data=f"setseries:{content_id}:new"
+            )
+        ])
+
+        if current_series:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="❌ Видалити з серії",
+                    callback_data=f"setseries:{content_id}:remove"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"editmovie:{content_id}")
+        ])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        current_info = f"Поточна серія: <b>{current_series}</b>" if current_series else "Фільм без серії"
+
+        await callback.message.edit_text(
+            f"📁 <b>Серія фільмів</b>\n\n"
+            f"🎬 {movie['title']}\n"
+            f"{current_info}\n\n"
+            f"Оберіть серію або створіть нову:",
+            reply_markup=keyboard
+        )
+        await state.set_state(EditContentStates.choosing_field)
+        await callback.answer()
+        return
+
     # Показуємо підказку в залежності від поля
     field_names = {
         "title": "українську назву",
@@ -2036,6 +2113,75 @@ async def process_edit_field_selection(callback: CallbackQuery, state: FSMContex
     )
     await state.set_state(EditContentStates.waiting_for_new_value)
     await callback.answer()
+
+
+@router.message(EditContentStates.choosing_field, ~F.text.startswith("/"))
+async def process_new_series_name_for_edit(message: Message, state: FSMContext):
+    """Обробка введення назви нової серії при редагуванні"""
+    data = await state.get_data()
+
+    # Перевіряємо чи ми чекаємо назву серії
+    if not data.get("awaiting_series_name"):
+        await message.answer("❌ Будь ласка, використовуйте кнопки для навігації.")
+        return
+
+    movie_id = data.get("edit_content_id")
+    series_name = message.text.strip()
+
+    # Оновлюємо серію
+    await update_movie_field(movie_id, "series_name", series_name)
+
+    movie = await get_movie_by_id(movie_id)
+
+    await message.answer(f"✅ Фільм додано до нової серії: <b>{series_name}</b>")
+
+    # Показуємо оновлене меню серій
+    current_series = series_name
+    all_series = await get_all_movie_series_names()
+
+    buttons = []
+    for s_name in all_series[:10]:
+        prefix = "✅ " if s_name == current_series else "📁 "
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{prefix}{s_name}",
+                callback_data=f"set_series:{movie_id}:{s_name}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(
+            text="➕ Створити нову серію",
+            callback_data=f"set_series:{movie_id}:new"
+        )
+    ])
+
+    if current_series:
+        buttons.append([
+            InlineKeyboardButton(
+                text="❌ Видалити з серії",
+                callback_data=f"set_series:{movie_id}:remove"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=f"editmovie:{movie_id}")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    current_info = f"Поточна серія: <b>{current_series}</b>"
+
+    await message.answer(
+        f"📁 <b>Серія фільмів</b>\n\n"
+        f"🎬 {movie['title']}\n"
+        f"{current_info}\n\n"
+        f"Оберіть серію або створіть нову:",
+        reply_markup=keyboard
+    )
+
+    # Очищаємо прапорець
+    await state.update_data(awaiting_series_name=False)
 
 
 @router.message(EditContentStates.waiting_for_new_value, ~F.text.startswith("/"))
@@ -2389,3 +2535,103 @@ async def toggle_visibility_handler(callback: CallbackQuery, state: FSMContext):
         await callback.answer("🔒 Контент приховано! Він більше не буде показуватись користувачам.")
     else:
         await callback.answer("👁 Контент показано! Тепер він видимий для всіх користувачів.")
+
+
+# ===============================================
+# Управління серіями фільмів
+# ===============================================
+
+@router.callback_query(F.data.startswith("setseries:"))
+async def handle_set_series(callback: CallbackQuery, state: FSMContext):
+    """Обробка встановлення серії для фільму"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔️ Ця функція доступна тільки для адміністраторів.", show_alert=True)
+        return
+
+    parts = callback.data.split(":", 2)
+    movie_id = parts[1]
+    action = parts[2] if len(parts) > 2 else None
+
+    movie = await get_movie_by_id(movie_id)
+    if not movie:
+        await callback.answer("❌ Фільм не знайдено", show_alert=True)
+        return
+
+    # Видалення з серії
+    if action == "remove":
+        await update_movie_field(movie_id, "series_name", None)
+        await callback.answer("✅ Фільм видалено з серії")
+        await state.clear()
+        return
+
+    # Створення нової серії
+    if action == "new":
+        await callback.message.edit_text(
+            "➕ <b>Створення нової серії</b>\n\n"
+            "Введіть назву нової серії фільмів (наприклад: <code>Шрек</code>, <code>Мадагаскар</code>):"
+        )
+        await state.update_data(edit_content_id=movie_id, awaiting_series_name=True)
+        await callback.answer()
+        return
+
+    # Встановлення існуючої серії за індексом
+    try:
+        series_idx = int(action)
+        data = await state.get_data()
+        series_list = data.get("series_list", [])
+
+        if series_idx >= len(series_list):
+            await callback.answer("❌ Помилка: серія не знайдена", show_alert=True)
+            return
+
+        series_name = series_list[series_idx]
+        await update_movie_field(movie_id, "series_name", series_name)
+        await callback.answer(f"✅ Фільм додано до серії: {series_name}")
+
+        # Оновлюємо меню
+        current_series = series_name
+        all_series = await get_all_movie_series_names()
+        await state.update_data(series_list=all_series)
+
+        buttons = []
+        for idx, s_name in enumerate(all_series[:10]):
+            prefix = "✅ " if s_name == current_series else "📁 "
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"{prefix}{s_name}",
+                    callback_data=f"setseries:{movie_id}:{idx}"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="➕ Створити нову серію",
+                callback_data=f"setseries:{movie_id}:new"
+            )
+        ])
+
+        if current_series:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="❌ Видалити з серії",
+                    callback_data=f"setseries:{movie_id}:remove"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"editmovie:{movie_id}")
+        ])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        current_info = f"Поточна серія: <b>{current_series}</b>"
+
+        await callback.message.edit_text(
+            f"📁 <b>Серія фільмів</b>\n\n"
+            f"🎬 {movie['title']}\n"
+            f"{current_info}\n\n"
+            f"Оберіть серію або створіть нову:",
+            reply_markup=keyboard
+        )
+    except (ValueError, IndexError) as e:
+        await callback.answer("❌ Помилка при обробці серії", show_alert=True)
