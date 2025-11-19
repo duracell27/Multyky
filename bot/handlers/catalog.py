@@ -30,6 +30,7 @@ from bot.database.users import (
     is_movie_watched
 )
 from bot.utils import send_movie_video
+from bot.config import config
 
 router = Router()
 
@@ -90,7 +91,9 @@ async def cmd_catalog(message: Message, state: FSMContext, bot: Bot):
 async def show_movies(callback: CallbackQuery):
     """Показати список фільмів (згруповані за серіями)"""
 
-    grouped_data = await get_grouped_movies()
+    # Адміни бачать всі фільми, включаючи приховані
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+    grouped_data = await get_grouped_movies(include_hidden=is_admin)
     grouped = grouped_data["grouped"]
     standalone = grouped_data["standalone"]
 
@@ -150,7 +153,9 @@ async def show_series_movies(callback: CallbackQuery):
 
     series_name = callback.data.split(":", 1)[1]
 
-    movies = await get_movies_by_series_name(series_name)
+    # Адміни бачать всі фільми, включаючи приховані
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+    movies = await get_movies_by_series_name(series_name, include_hidden=is_admin)
 
     if not movies:
         await callback.answer("❌ Фільми не знайдено", show_alert=True)
@@ -192,7 +197,9 @@ async def show_series_movies(callback: CallbackQuery):
 async def show_series(callback: CallbackQuery):
     """Показати список серіалів"""
 
-    series = await get_all_series_list()
+    # Адміни бачать всі серіали, включаючи приховані
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+    series = await get_all_series_list(include_hidden=is_admin)
 
     if not series:
         await callback.message.edit_text("📭 Поки що немає доданих серіалів.")
@@ -510,7 +517,35 @@ async def send_episode(callback: CallbackQuery, bot: Bot):
 
         await callback.answer("✅ Приємного перегляду!")
     except Exception as e:
-        await callback.answer(f"❌ Помилка при відправці відео: {str(e)}", show_alert=True)
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Логуємо помилку з детальною інформацією
+        logger.error(
+            f"Помилка відправки серії '{series_info.get('title')}' S{season}E{episode_num} (ID: {series_id}): {str(e)}\n"
+            f"File ID: {episode.get('video_file_id')}\n"
+            f"Video type: {episode.get('video_type')}"
+        )
+
+        # Для адмінів відправляємо детальну інформацію окремим повідомленням
+        if callback.from_user.id in config.ADMIN_IDS:
+            error_msg = (
+                f"❌ <b>Помилка при відправці відео</b>\n\n"
+                f"📺 Серіал: <b>{series_info.get('title')}</b>\n"
+                f"📹 Сезон {season}, Серія {episode_num}\n"
+                f"🆔 ID: <code>{series_id}</code>\n"
+                f"📹 Video type: {episode.get('video_type')}\n"
+                f"📝 File ID: <code>{episode.get('video_file_id')}</code>\n\n"
+                f"❗️ Помилка: {str(e)}\n\n"
+                f"💡 <i>Можливо, file_id застарів. Видаліть і додайте серію знову через /admin</i>"
+            )
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text=error_msg
+            )
+            await callback.answer("❌ Помилка! Деталі вище ⬆️")
+        else:
+            await callback.answer("❌ Помилка при відправці відео", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("m:"))
@@ -600,7 +635,34 @@ async def send_movie(callback: CallbackQuery, bot: Bot):
 
         await callback.answer("✅ Приємного перегляду!")
     except Exception as e:
-        await callback.answer(f"❌ Помилка при відправці відео: {str(e)}", show_alert=True)
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Логуємо помилку з детальною інформацією
+        logger.error(
+            f"Помилка відправки фільму '{movie.get('title')}' (ID: {movie_id}): {str(e)}\n"
+            f"File ID: {movie.get('video_file_id')}\n"
+            f"Video type: {movie.get('video_type')}"
+        )
+
+        # Для адмінів відправляємо детальну інформацію окремим повідомленням
+        if callback.from_user.id in config.ADMIN_IDS:
+            error_msg = (
+                f"❌ <b>Помилка при відправці відео</b>\n\n"
+                f"🎬 Фільм: <b>{movie.get('title')}</b>\n"
+                f"🆔 ID: <code>{movie_id}</code>\n"
+                f"📹 Video type: {movie.get('video_type')}\n"
+                f"📝 File ID: <code>{movie.get('video_file_id')}</code>\n\n"
+                f"❗️ Помилка: {str(e)}\n\n"
+                f"💡 <i>Можливо, file_id застарів. Видаліть і додайте фільм знову через /admin</i>"
+            )
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text=error_msg
+            )
+            await callback.answer("❌ Помилка! Деталі вище ⬆️")
+        else:
+            await callback.answer("❌ Помилка при відправці відео", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("like:"))

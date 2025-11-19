@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 from bot.database import db
-from bot import config
+from bot.config import config
 
 
 async def create_movie(
@@ -192,11 +192,13 @@ async def get_total_views_count() -> int:
     return 0
 
 
-async def get_top_content_by_views(limit: int = 5) -> list:
+async def get_top_content_by_views(limit: int = 5, include_hidden: bool = True) -> list:
     """Отримати топ контенту по переглядах"""
-    cursor = db.videos.find(
-        {"is_hidden": {"$ne": True}}
-    ).sort("views_count", -1).limit(limit)
+    query = {}
+    if not include_hidden:
+        query["is_hidden"] = {"$ne": True}
+
+    cursor = db.videos.find(query).sort("views_count", -1).limit(limit)
 
     return await cursor.to_list(length=limit)
 

@@ -313,8 +313,9 @@ async def process_search_query(message: Message, state: FSMContext):
         await message.answer("❌ Введи назву для пошуку")
         return
 
-    # Виконуємо пошук
-    results = await search_content(query)
+    # Адміни бачать всі результати, включаючи приховані
+    is_admin = message.from_user.id in config.ADMIN_IDS
+    results = await search_content(query, include_hidden=is_admin)
 
     if not results:
         await message.answer(
