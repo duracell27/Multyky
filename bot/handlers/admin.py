@@ -1923,7 +1923,9 @@ async def cmd_edit_content(message: Message, state: FSMContext):
 @router.callback_query(EditContentStates.choosing_content_type, F.data.startswith("edittype:"))
 async def process_edit_type(callback: CallbackQuery, state: FSMContext):
     """Обробка вибору типу контенту для редагування"""
-    content_type = callback.data.split(":", 1)[1]
+    parts = callback.data.split(":")
+    content_type = parts[1]
+    page = int(parts[2]) if len(parts) > 2 else 0
 
     if content_type == "cancel":
         await callback.message.edit_text("❌ Редагування скасовано.")
@@ -1943,9 +1945,18 @@ async def process_edit_type(callback: CallbackQuery, state: FSMContext):
             await callback.answer()
             return
 
+        # Пагінація: 15 фільмів на сторінку
+        ITEMS_PER_PAGE = 15
+        total_pages = (len(movies_list) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        page = max(0, min(page, total_pages - 1))
+
+        start_idx = page * ITEMS_PER_PAGE
+        end_idx = start_idx + ITEMS_PER_PAGE
+        movies_page = movies_list[start_idx:end_idx]
+
         # Створюємо кнопки для вибору фільму
         buttons = []
-        for movie in movies_list[:20]:
+        for movie in movies_page:
             movie_id = str(movie["_id"])
             is_hidden = movie.get("is_hidden", False)
             hidden_emoji = "🔒 " if is_hidden else ""
@@ -1956,14 +1967,33 @@ async def process_edit_type(callback: CallbackQuery, state: FSMContext):
                 )
             ])
 
+        # Кнопки навігації
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data=f"edittype:movie:{page-1}"
+            ))
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton(
+                text="Далі ▶️",
+                callback_data=f"edittype:movie:{page+1}"
+            ))
+
+        if nav_buttons:
+            buttons.append(nav_buttons)
+
         buttons.append([
             InlineKeyboardButton(text="❌ Скасувати", callback_data="editmovie:cancel")
         ])
         keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
+        page_info = f"Сторінка {page + 1}/{total_pages}" if total_pages > 1 else ""
+
         await callback.message.edit_text(
             "🎬 <b>Виберіть фільм для редагування:</b>\n\n"
-            f"<i>Всього фільмів: {len(movies_list)}</i>",
+            f"<i>Всього фільмів: {len(movies_list)}</i>\n"
+            f"{page_info}",
             reply_markup=keyboard
         )
         await state.set_state(EditContentStates.choosing_content)
@@ -1978,9 +2008,18 @@ async def process_edit_type(callback: CallbackQuery, state: FSMContext):
             await callback.answer()
             return
 
+        # Пагінація: 15 серіалів на сторінку
+        ITEMS_PER_PAGE = 15
+        total_pages = (len(series_list) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        page = max(0, min(page, total_pages - 1))
+
+        start_idx = page * ITEMS_PER_PAGE
+        end_idx = start_idx + ITEMS_PER_PAGE
+        series_page = series_list[start_idx:end_idx]
+
         # Створюємо кнопки для вибору серіалу
         buttons = []
-        for series in series_list[:20]:
+        for series in series_page:
             series_id = str(series["_id"])
             is_hidden = series.get("is_hidden", False)
             hidden_emoji = "🔒 " if is_hidden else ""
@@ -1991,13 +2030,33 @@ async def process_edit_type(callback: CallbackQuery, state: FSMContext):
                 )
             ])
 
+        # Кнопки навігації
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data=f"edittype:series:{page-1}"
+            ))
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton(
+                text="Далі ▶️",
+                callback_data=f"edittype:series:{page+1}"
+            ))
+
+        if nav_buttons:
+            buttons.append(nav_buttons)
+
         buttons.append([
             InlineKeyboardButton(text="❌ Скасувати", callback_data="editseries:cancel")
         ])
         keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
+        page_info = f"Сторінка {page + 1}/{total_pages}" if total_pages > 1 else ""
+
         await callback.message.edit_text(
-            "📺 <b>Виберіть серіал для редагування:</b>",
+            "📺 <b>Виберіть серіал для редагування:</b>\n\n"
+            f"<i>Всього серіалів: {len(series_list)}</i>\n"
+            f"{page_info}",
             reply_markup=keyboard
         )
         await state.set_state(EditContentStates.choosing_content)

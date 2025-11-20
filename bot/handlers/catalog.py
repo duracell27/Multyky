@@ -520,24 +520,18 @@ async def send_episode(callback: CallbackQuery, bot: Bot):
         import logging
         logger = logging.getLogger(__name__)
 
-        # Логуємо помилку з детальною інформацією
-        logger.error(
-            f"Помилка відправки серії '{series_info.get('title')}' S{season}E{episode_num} (ID: {series_id}): {str(e)}\n"
-            f"File ID: {episode.get('video_file_id')}\n"
-            f"Video type: {episode.get('video_type')}"
-        )
+        # Базове логування
+        logger.error(f"Не вдалося відправити '{series_info.get('title')}' S{season}E{episode_num}: {str(e)}")
 
-        # Для адмінів відправляємо детальну інформацію окремим повідомленням
+        # Для адмінів відправляємо детальну інформацію
         if callback.from_user.id in config.ADMIN_IDS:
             error_msg = (
                 f"❌ <b>Помилка при відправці відео</b>\n\n"
                 f"📺 Серіал: <b>{series_info.get('title')}</b>\n"
                 f"📹 Сезон {season}, Серія {episode_num}\n"
                 f"🆔 ID: <code>{series_id}</code>\n"
-                f"📹 Video type: {episode.get('video_type')}\n"
-                f"📝 File ID: <code>{episode.get('video_file_id')}</code>\n\n"
                 f"❗️ Помилка: {str(e)}\n\n"
-                f"💡 <i>Можливо, file_id застарів. Видаліть і додайте серію знову через /admin</i>"
+                f"💡 <i>Видаліть і додайте серію знову через /admin</i>"
             )
             await bot.send_message(
                 chat_id=callback.from_user.id,
@@ -638,23 +632,17 @@ async def send_movie(callback: CallbackQuery, bot: Bot):
         import logging
         logger = logging.getLogger(__name__)
 
-        # Логуємо помилку з детальною інформацією
-        logger.error(
-            f"Помилка відправки фільму '{movie.get('title')}' (ID: {movie_id}): {str(e)}\n"
-            f"File ID: {movie.get('video_file_id')}\n"
-            f"Video type: {movie.get('video_type')}"
-        )
+        # Базове логування
+        logger.error(f"Не вдалося відправити '{movie.get('title')}': {str(e)}")
 
-        # Для адмінів відправляємо детальну інформацію окремим повідомленням
+        # Для адмінів відправляємо детальну інформацію
         if callback.from_user.id in config.ADMIN_IDS:
             error_msg = (
                 f"❌ <b>Помилка при відправці відео</b>\n\n"
                 f"🎬 Фільм: <b>{movie.get('title')}</b>\n"
                 f"🆔 ID: <code>{movie_id}</code>\n"
-                f"📹 Video type: {movie.get('video_type')}\n"
-                f"📝 File ID: <code>{movie.get('video_file_id')}</code>\n\n"
                 f"❗️ Помилка: {str(e)}\n\n"
-                f"💡 <i>Можливо, file_id застарів. Видаліть і додайте фільм знову через /admin</i>"
+                f"💡 <i>Видаліть і додайте фільм знову через /admin</i>"
             )
             await bot.send_message(
                 chat_id=callback.from_user.id,
