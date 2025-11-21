@@ -195,12 +195,20 @@ async def cmd_stats(message: Message):
 @router.message(Command("history"))
 async def cmd_history(message: Message, bot: Bot):
     """Обробник команди /history - показати історію переглядів"""
+    await show_history_page(message, bot, page=0)
 
-    # Автоматично оновлюємо активність
-    await get_or_create_user(message.from_user, bot)
 
-    # Отримуємо історію переглядів
-    history = await get_watch_history(message.from_user.id)
+async def show_history_page(message: Message, bot: Bot, page: int = 0, user_id: int = None):
+    """Показати сторінку історії переглядів"""
+
+    # Визначаємо user_id
+    if user_id is None:
+        user_id = message.from_user.id
+        # Автоматично оновлюємо активність
+        await get_or_create_user(message.from_user, bot)
+
+    # Отримуємо історію переглядів (максимум 50)
+    history = await get_watch_history(user_id, limit=50)
 
     if not history:
         await message.answer(
@@ -209,9 +217,18 @@ async def cmd_history(message: Message, bot: Bot):
         )
         return
 
-    # Формуємо кнопки для кожного перегляду (максимум 20 останніх)
+    # Пагінація: 10 елементів на сторінку
+    ITEMS_PER_PAGE = 10
+    total_pages = (len(history) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    history_page = history[start_idx:end_idx]
+
+    # Формуємо кнопки для кожного перегляду
     buttons = []
-    for item in history[:20]:
+    for item in history_page:
         movie_id = item.get("movie_id")
         title = item.get("title", "Невідомо")
         content_type = item.get("content_type", "movie")
@@ -237,25 +254,42 @@ async def cmd_history(message: Message, bot: Bot):
             InlineKeyboardButton(text=button_text, callback_data=callback_data)
         ])
 
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"history_page:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"history_page:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
     await message.answer(
-        "📜 <b>Історія переглядів</b>\n\n"
-        f"Останні {len(buttons)} переглянутих:\n"
+        f"📜 <b>Історія переглядів</b>\n\n"
+        f"Останні {len(history)} переглянутих:{page_info}\n"
         "Натисни щоб переглянути знову 👇",
         reply_markup=keyboard
     )
 
 
-@router.message(Command("watchlater", "watchLater"))
-async def cmd_watch_later(message: Message, bot: Bot):
-    """Обробник команди /watchlater - показати чергу перегляду"""
+async def show_watch_later_page(message: Message, bot: Bot, page: int = 0):
+    """Показати сторінку черги перегляду"""
 
     # Автоматично оновлюємо активність
     await get_or_create_user(message.from_user, bot)
 
-    # Отримуємо чергу перегляду
-    watch_later_ids = await get_watch_later(message.from_user.id)
+    # Отримуємо чергу перегляду (максимум 50)
+    watch_later_ids = await get_watch_later(message.from_user.id, limit=50)
 
     if not watch_later_ids:
         await message.answer(
@@ -264,9 +298,18 @@ async def cmd_watch_later(message: Message, bot: Bot):
         )
         return
 
+    # Пагінація: 10 елементів на сторінку
+    ITEMS_PER_PAGE = 10
+    total_pages = (len(watch_later_ids) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    watch_later_page = watch_later_ids[start_idx:end_idx]
+
     # Формуємо кнопки для кожного серіалу
     buttons = []
-    for series_id in watch_later_ids:
+    for series_id in watch_later_page:
         # Отримуємо інформацію про серіал
         series_info = await get_movie_by_id(series_id)
         if not series_info:
@@ -289,14 +332,38 @@ async def cmd_watch_later(message: Message, bot: Bot):
         )
         return
 
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"watchlater_page:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"watchlater_page:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
 
     await message.answer(
         "📌 <b>Черга перегляду</b>\n\n"
-        f"Збережено серіалів: {len(buttons)}\n"
+        f"Збережено серіалів: {len(watch_later_ids)}{page_info}\n"
         "Натисни щоб переглянути 👇",
         reply_markup=keyboard
     )
+
+
+@router.message(Command("watchlater", "watchLater"))
+async def cmd_watch_later(message: Message, bot: Bot):
+    """Обробник команди /watchlater - показати чергу перегляду"""
+    await show_watch_later_page(message, bot)
 
 
 @router.message(Command("search"))
@@ -594,6 +661,190 @@ async def process_help_message(message: Message, state: FSMContext, bot: Bot):
             "На жаль, не вдалося надіслати повідомлення адміністраторам. Спробуйте пізніше.\n\n"
             "Повернутися до /menu"
         )
+
+
+# Обробник пагінації історії
+@router.callback_query(F.data.startswith("history_page:"))
+async def history_pagination(callback: CallbackQuery, bot: Bot):
+    """Обробка пагінації історії переглядів"""
+    page = int(callback.data.split(":")[1])
+
+    # Отримуємо user_id з callback
+    user_id = callback.from_user.id
+
+    # Видаляємо старе повідомлення
+    await callback.message.delete()
+
+    # Створюємо тимчасовий об'єкт для відправки повідомлення
+    # Відправляємо нову сторінку використовуючи bot.send_message
+    history = await get_watch_history(user_id, limit=50)
+
+    if not history:
+        await bot.send_message(
+            callback.message.chat.id,
+            "📭 <b>Історія переглядів порожня</b>\n\n"
+            "Переглянь щось із /catalog і воно з'явиться тут!"
+        )
+        await callback.answer()
+        return
+
+    # Пагінація: 10 елементів на сторінку
+    ITEMS_PER_PAGE = 10
+    total_pages = (len(history) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    history_page = history[start_idx:end_idx]
+
+    # Формуємо кнопки для кожного перегляду
+    buttons = []
+    for item in history_page:
+        movie_id = item.get("movie_id")
+        title = item.get("title", "Невідомо")
+        content_type = item.get("content_type", "movie")
+
+        # Формуємо текст кнопки
+        if content_type == "series":
+            season = item.get("season")
+            episode = item.get("episode")
+
+            # Перевіряємо що season і episode є числами
+            if season is not None and episode is not None:
+                button_text = f"📺 {title} S{season}E{episode}"
+                callback_data = f"e:{movie_id}:{season}:{episode}"
+            else:
+                # Якщо немає інформації про епізод - відкриваємо серіал
+                button_text = f"📺 {title}"
+                callback_data = f"s:{movie_id}"
+        else:
+            button_text = f"🎬 {title}"
+            callback_data = f"m:{movie_id}"
+
+        buttons.append([
+            InlineKeyboardButton(text=button_text, callback_data=callback_data)
+        ])
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"history_page:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"history_page:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await bot.send_message(
+        callback.message.chat.id,
+        f"📜 <b>Історія переглядів</b>\n\n"
+        f"Останні {len(history)} переглянутих:{page_info}\n"
+        "Натисни щоб переглянути знову 👇",
+        reply_markup=keyboard
+    )
+
+    await callback.answer()
+
+
+# Обробник пагінації черги перегляду
+@router.callback_query(F.data.startswith("watchlater_page:"))
+async def watchlater_pagination(callback: CallbackQuery, bot: Bot):
+    """Обробка пагінації черги перегляду"""
+    page = int(callback.data.split(":")[1])
+
+    # Отримуємо user_id з callback
+    user_id = callback.from_user.id
+
+    # Видаляємо старе повідомлення
+    await callback.message.delete()
+
+    # Отримуємо чергу перегляду (максимум 50)
+    watch_later_ids = await get_watch_later(user_id, limit=50)
+
+    if not watch_later_ids:
+        await bot.send_message(
+            callback.message.chat.id,
+            "📭 <b>Черга перегляду порожня</b>\n\n"
+            "Додай серіали з /catalog і вони з'являться тут!"
+        )
+        await callback.answer()
+        return
+
+    # Пагінація: 10 елементів на сторінку
+    ITEMS_PER_PAGE = 10
+    total_pages = (len(watch_later_ids) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    watch_later_page = watch_later_ids[start_idx:end_idx]
+
+    # Формуємо кнопки для кожного серіалу
+    buttons = []
+    for series_id in watch_later_page:
+        # Отримуємо інформацію про серіал
+        series_info = await get_movie_by_id(series_id)
+        if not series_info:
+            continue
+
+        title = series_info.get("title", "Невідомо")
+
+        # Створюємо кнопку з посиланням на серіал
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📺 {title}",
+                callback_data=f"s:{series_id}"
+            )
+        ])
+
+    if not buttons:
+        await bot.send_message(
+            callback.message.chat.id,
+            "📭 <b>Черга перегляду порожня</b>\n\n"
+            "Додай серіали з /catalog і вони з'являться тут!"
+        )
+        await callback.answer()
+        return
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"watchlater_page:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"watchlater_page:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await bot.send_message(
+        callback.message.chat.id,
+        "📌 <b>Черга перегляду</b>\n\n"
+        f"Збережено серіалів: {len(watch_later_ids)}{page_info}\n"
+        "Натисни щоб переглянути 👇",
+        reply_markup=keyboard
+    )
+
+    await callback.answer()
 
 
 # Обробники для кнопок клавіатури

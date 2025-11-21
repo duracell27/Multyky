@@ -164,12 +164,12 @@ async def add_to_watch_history(user_id: int, movie_id: str, movie_data: dict):
     )
 
 
-async def get_watch_history(user_id: int) -> list:
-    """Отримати історію перегляду користувача"""
+async def get_watch_history(user_id: int, limit: int = 50) -> list:
+    """Отримати історію перегляду користувача (обмежено останніми 50)"""
     user = await get_user(user_id)
     if user and "watch_history" in user:
-        # Повертаємо в зворотньому порядку (останні перегляди першими)
-        return list(reversed(user["watch_history"]))
+        # Повертаємо в зворотньому порядку (останні перегляди першими), максимум 50
+        return list(reversed(user["watch_history"][-limit:]))
     return []
 
 
@@ -192,11 +192,12 @@ async def remove_from_watch_later(user_id: int, series_id: str) -> bool:
     return result.modified_count > 0
 
 
-async def get_watch_later(user_id: int) -> list:
-    """Отримати чергу перегляду користувача"""
+async def get_watch_later(user_id: int, limit: int = 50) -> list:
+    """Отримати чергу перегляду користувача (обмежено останніми 50)"""
     user = await get_user(user_id)
     if user and "watch_later" in user:
-        return user["watch_later"]
+        # Повертаємо останні N записів (максимум 50)
+        return user["watch_later"][-limit:]
     return []
 
 
