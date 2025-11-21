@@ -1,6 +1,6 @@
 from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
 
 from bot.database.users import (
@@ -27,6 +27,27 @@ from bot.states import SearchStates, HelpStates
 router = Router()
 
 
+def get_main_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
+    """Створити головну клавіатуру для користувача"""
+
+    # Основні кнопки для всіх користувачів
+    keyboard = [
+        [KeyboardButton(text="🎬 Каталог"), KeyboardButton(text="🔍 Пошук")],
+        [KeyboardButton(text="📜 Історія"), KeyboardButton(text="📌 Пізніше")],
+        [KeyboardButton(text="❓ Допомога"), KeyboardButton(text="📋 Меню")]
+    ]
+
+    # Додаємо адмін-кнопки для адміністраторів
+    if is_admin:
+        keyboard.append([KeyboardButton(text="⚙️ Адмін-панель")])
+
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,
+        input_field_placeholder="Оберіть дію..."
+    )
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     """Обробник команди /start - автоматично реєструє користувача"""
@@ -44,6 +65,9 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     # Перевіряємо чи це новий користувач
     is_new_user = user.get("registered_at") == user.get("last_activity")
 
+    # Перевіряємо чи користувач є адміністратором
+    is_admin = message.from_user.id in config.ADMIN_IDS
+
     if is_new_user:
         welcome_text = (
             f"👋 Привіт, <b>{message.from_user.first_name}</b>!\n\n"
@@ -52,10 +76,10 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
             f"📊 Наша галерея з кожним днем збільшується і складає:\n"
             f"   🎬 Мультфільмів: <b>{movies_count}</b>\n"
             f"   📺 Мультсеріалів: <b>{series_count}</b>\n\n"
+            f"Використовуй кнопки нижче або команди:\n"
             f"📺 /catalog - переглянути каталог\n"
             f"🔍 /search - пошук мультфільмів\n"
-            f"❓ /help - допомога і зворотній зв'язок\n"
-            f"📜 /menu - головне меню з усіма командами"
+            f"❓ /help - допомога і зворотній зв'язок"
         )
     else:
         welcome_text = (
@@ -64,13 +88,10 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
             f"📊 Наша галерея з кожним днем збільшується і складає:\n"
             f"   🎬 Мультфільмів: <b>{movies_count}</b>\n"
             f"   📺 Мультсеріалів: <b>{series_count}</b>\n\n"
-            f"📺 /catalog - переглянути каталог\n"
-            f"🔍 /search - пошук мультфільмів\n"
-            f"❓ /help - допомога і зворотній зв'язок\n"
-            f"📜 /menu - головне меню"
+            f"Використовуй кнопки нижче для навігації! 👇"
         )
 
-    await message.answer(welcome_text)
+    await message.answer(welcome_text, reply_markup=get_main_keyboard(is_admin))
 
 
 @router.message(Command("menu"))
@@ -90,42 +111,34 @@ async def cmd_menu(message: Message, state: FSMContext, bot: Bot):
         # Меню для адміністратора
         menu_text = (
             "👑 <b>Головне меню адміністратора</b>\n\n"
-            "🎬 <b>Команди користувача:</b>\n"
-            "/catalog - Каталог мультфільмів і серіалів\n"
-            "/history - Історія переглядів\n"
-            "/watchlater - Переглянути пізніше\n"
-            "/menu - Показати це меню\n\n"
-            "🔍 <b>Пошук:</b>\n"
-            "/search - Знайти мультфільм\n\n"
-            "❓ <b>Допомога:</b>\n"
-            "/help - Допомога і зворотній зв'язок\n\n"
-            "⚙️ <b>Команди адміністратора:</b>\n"
+            "Використовуй кнопки нижче або команди:\n\n"
+            "🎬 <b>Основні:</b>\n"
+            "/catalog - Каталог мультфільмів\n"
+            "/search - Пошук\n"
+            "/history - Історія\n"
+            "/watchlater - Пізніше\n\n"
+            "⚙️ <b>Адмін:</b>\n"
             "/addMovie - Додати мультфільм\n"
-            "/addBatchMovie - Додати серіал (базовий)\n"
-            "/addSuperBatchMovie - Додати серіал (авто-режим)\n"
-            "/editContent - Редагувати контент\n"
-            "/deleteContent - Видалити контент\n"
-            "/stats - Статистика бота\n"
-            "/cancel - Скасувати поточну дію\n\n"
+            "/editContent - Редагувати\n"
+            "/deleteContent - Видалити\n"
+            "/stats - Статистика\n\n"
             "💡 <i>Приємної роботи!</i>"
         )
     else:
         # Меню для звичайного користувача
         menu_text = (
             "🎬 <b>Головне меню</b>\n\n"
-            "📺 <b>Доступні команди:</b>\n\n"
-            "/catalog - Каталог мультфільмів і серіалів\n"
+            "Використовуй кнопки нижче для швидкої навігації! 👇\n\n"
+            "Або команди:\n"
+            "/catalog - Каталог мультфільмів\n"
+            "/search - Пошук\n"
             "/history - Історія переглядів\n"
             "/watchlater - Переглянути пізніше\n"
-            "/menu - Показати це меню\n\n"
-            "🔍 <b>Пошук:</b>\n"
-            "/search - Знайти мультфільм\n\n"
-            "❓ <b>Допомога:</b>\n"
-            "/help - Допомога і зворотній зв'язок\n\n"
+            "/help - Допомога\n\n"
             "📝 <i>Приємного перегляду!</i>"
         )
 
-    await message.answer(menu_text)
+    await message.answer(menu_text, reply_markup=get_main_keyboard(is_admin))
 
 
 @router.message(Command("stats"))
@@ -304,10 +317,27 @@ async def cmd_search(message: Message, state: FSMContext, bot: Bot):
 
 
 @router.message(SearchStates.waiting_for_query, ~F.text.startswith("/"))
-async def process_search_query(message: Message, state: FSMContext):
+async def process_search_query(message: Message, state: FSMContext, bot: Bot):
     """Обробник пошукового запиту"""
 
     query = message.text.strip()
+
+    # Перевіряємо чи це не кнопка клавіатури - якщо так, очищаємо стан і дозволяємо обробнику кнопки спрацювати
+    keyboard_buttons = {
+        "🎬 Каталог": lambda: cmd_catalog(message, state, bot),
+        "🔍 Пошук": lambda: cmd_search(message, state, bot),
+        "📜 Історія": lambda: cmd_history(message, bot),
+        "📌 Пізніше": lambda: cmd_watch_later(message, bot),
+        "❓ Допомога": lambda: cmd_help(message, state, bot),
+        "📋 Меню": lambda: cmd_menu(message, state, bot),
+        "⚙️ Адмін-панель": lambda: btn_admin(message)
+    }
+
+    if query in keyboard_buttons:
+        # Очищаємо стан і викликаємо відповідну команду
+        await state.clear()
+        await keyboard_buttons[query]()
+        return
 
     if not query:
         await message.answer("❌ Введи назву для пошуку")
@@ -414,6 +444,22 @@ async def process_help_request(message: Message, state: FSMContext, bot: Bot):
 
     user_request = message.text.strip()
 
+    # Перевіряємо чи це не кнопка клавіатури
+    keyboard_buttons = {
+        "🎬 Каталог": lambda: cmd_catalog(message, state, bot),
+        "🔍 Пошук": lambda: cmd_search(message, state, bot),
+        "📜 Історія": lambda: cmd_history(message, bot),
+        "📌 Пізніше": lambda: cmd_watch_later(message, bot),
+        "❓ Допомога": lambda: cmd_help(message, state, bot),
+        "📋 Меню": lambda: cmd_menu(message, state, bot),
+        "⚙️ Адмін-панель": lambda: btn_admin(message)
+    }
+
+    if user_request in keyboard_buttons:
+        await state.clear()
+        await keyboard_buttons[user_request]()
+        return
+
     if not user_request:
         await message.answer("❌ Введіть ваш запит")
         return
@@ -485,6 +531,22 @@ async def process_help_message(message: Message, state: FSMContext, bot: Bot):
 
     user_message = message.text.strip()
 
+    # Перевіряємо чи це не кнопка клавіатури
+    keyboard_buttons = {
+        "🎬 Каталог": lambda: cmd_catalog(message, state, bot),
+        "🔍 Пошук": lambda: cmd_search(message, state, bot),
+        "📜 Історія": lambda: cmd_history(message, bot),
+        "📌 Пізніше": lambda: cmd_watch_later(message, bot),
+        "❓ Допомога": lambda: cmd_help(message, state, bot),
+        "📋 Меню": lambda: cmd_menu(message, state, bot),
+        "⚙️ Адмін-панель": lambda: btn_admin(message)
+    }
+
+    if user_message in keyboard_buttons:
+        await state.clear()
+        await keyboard_buttons[user_message]()
+        return
+
     if not user_message:
         await message.answer("❌ Введіть ваше повідомлення")
         return
@@ -532,3 +594,70 @@ async def process_help_message(message: Message, state: FSMContext, bot: Bot):
             "На жаль, не вдалося надіслати повідомлення адміністраторам. Спробуйте пізніше.\n\n"
             "Повернутися до /menu"
         )
+
+
+# Обробники для кнопок клавіатури
+@router.message(F.text == "🎬 Каталог")
+async def btn_catalog(message: Message, state: FSMContext, bot: Bot):
+    """Обробник кнопки 'Каталог'"""
+    await cmd_catalog(message, state, bot)
+
+
+@router.message(F.text == "🔍 Пошук")
+async def btn_search(message: Message, state: FSMContext, bot: Bot):
+    """Обробник кнопки 'Пошук'"""
+    await cmd_search(message, state, bot)
+
+
+@router.message(F.text == "📜 Історія")
+async def btn_history(message: Message, bot: Bot):
+    """Обробник кнопки 'Історія'"""
+    await cmd_history(message, bot)
+
+
+@router.message(F.text == "📌 Пізніше")
+async def btn_watchlater(message: Message, bot: Bot):
+    """Обробник кнопки 'Пізніше'"""
+    await cmd_watch_later(message, bot)
+
+
+@router.message(F.text == "❓ Допомога")
+async def btn_help(message: Message, state: FSMContext, bot: Bot):
+    """Обробник кнопки 'Допомога'"""
+    await cmd_help(message, state, bot)
+
+
+@router.message(F.text == "📋 Меню")
+async def btn_menu(message: Message, state: FSMContext, bot: Bot):
+    """Обробник кнопки 'Меню'"""
+    await cmd_menu(message, state, bot)
+
+
+@router.message(F.text == "⚙️ Адмін-панель")
+async def btn_admin(message: Message):
+    """Обробник кнопки 'Адмін-панель'"""
+    # Перевірка чи користувач є адміністратором
+    if message.from_user.id not in config.ADMIN_IDS:
+        await message.answer("⛔️ Ця функція доступна тільки для адміністраторів.")
+        return
+
+    await message.answer(
+        "⚙️ <b>Адмін-панель</b>\n\n"
+        "<b>Управління контентом:</b>\n"
+        "/addMovie - Додати мультфільм\n"
+        "/addBatchMovie - Додати серіал (базовий)\n"
+        "/addSuperBatchMovie - Додати серіал (авто-режим)\n"
+        "/editContent - Редагувати контент\n"
+        "/deleteContent - Видалити контент\n\n"
+        "<b>Статистика:</b>\n"
+        "/stats - Статистика бота\n\n"
+        "<b>Інше:</b>\n"
+        "/cancel - Скасувати поточну дію"
+    )
+
+
+# Імпортуємо команду /catalog з catalog handler
+async def cmd_catalog(message: Message, state: FSMContext, bot: Bot):
+    """Викликати команду /catalog"""
+    from bot.handlers.catalog import cmd_catalog as catalog_cmd
+    await catalog_cmd(message, state, bot)

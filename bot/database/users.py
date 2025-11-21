@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from aiogram import Bot
 from aiogram.types import User
@@ -284,6 +284,10 @@ async def get_new_users_for_date(date: datetime) -> list:
 async def send_daily_registration_report(bot: Bot):
     """Відправити щоденний звіт про реєстрації адміністраторам"""
     from datetime import datetime, timedelta
+    from bot.database.movies import get_total_views_count
+
+    # Зберігаємо щоденну статистику
+    await save_daily_stats()
 
     # Отримуємо вчорашню дату (звіт за попередній день)
     yesterday = datetime.utcnow() - timedelta(days=1)
@@ -291,23 +295,33 @@ async def send_daily_registration_report(bot: Bot):
     # Отримуємо кількість та список нових користувачів за вчора
     new_users_count = await get_new_users_count_for_date(yesterday)
 
+    # Отримуємо статистику переглядів
+    total_views = await get_total_views_count()
+    views_today = await get_views_for_last_day()
+
     if new_users_count == 0:
         # Якщо немає нових користувачів, не відправляємо звіт
         # (або можна відправити повідомлення про те, що нових немає)
         message = (
-            f"📊 <b>Щоденний звіт про реєстрації</b>\n\n"
+            f"📊 <b>Щоденний звіт</b>\n\n"
             f"📅 Дата: {yesterday.strftime('%d.%m.%Y')}\n\n"
-            f"👥 Нових користувачів: <b>0</b>\n\n"
-            f"<i>Вчора не було нових реєстрацій</i>"
+            f"👥 Нових користувачів: <b>0</b>\n"
+            f"<i>Вчора не було нових реєстрацій</i>\n\n"
+            f"👁 <b>Перегляди:</b>\n"
+            f"   • За останній день: <b>{views_today}</b>\n"
+            f"   • Всього: <b>{total_views}</b>"
         )
     else:
         # Отримуємо детальний список нових користувачів
         new_users = await get_new_users_for_date(yesterday)
 
         message = (
-            f"📊 <b>Щоденний звіт про реєстрації</b>\n\n"
+            f"📊 <b>Щоденний звіт</b>\n\n"
             f"📅 Дата: {yesterday.strftime('%d.%m.%Y')}\n\n"
             f"👥 Нових користувачів: <b>{new_users_count}</b>\n\n"
+            f"👁 <b>Перегляди:</b>\n"
+            f"   • За останній день: <b>{views_today}</b>\n"
+            f"   • Всього: <b>{total_views}</b>\n\n"
         )
 
         # Додаємо інформацію про кожного нового користувача (максимум 20)
@@ -340,3 +354,57 @@ async def send_daily_registration_report(bot: Bot):
             await bot.send_message(admin_id, message)
         except Exception as e:
             logging.error(f"Failed to send daily report to admin {admin_id}: {e}")
+
+
+# ===============================================
+# Щоденна статистика
+# ===============================================
+
+async def save_daily_stats():
+    """Зберегти щоденну статистику"""
+    from bot.database.movies import get_total_views_count
+
+    # Отримуємо поточну статистику
+    total_users = await get_users_count()
+    total_views = await get_total_views_count()
+
+    # Зберігаємо в базу
+    stats_data = {
+        "date": datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0),
+        "users_count": total_users,
+        "views_count": total_views,
+        "created_at": datetime.utcnow()
+    }
+
+    # Використовуємо upsert щоб не дублювати записи за один день
+    await db.daily_stats.update_one(
+        {"date": stats_data["date"]},
+        {"$set": stats_data},
+        upsert=True
+    )
+
+    logging.info(f"Daily stats saved: {total_users} users, {total_views} views")
+
+
+async def get_yesterday_stats() -> Optional[dict]:
+    """Отримати статистику за вчора"""
+    yesterday = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    return await db.daily_stats.find_one({"date": yesterday})
+
+
+async def get_views_for_last_day() -> int:
+    """Отримати кількість переглядів за останній день"""
+    from bot.database.movies import get_total_views_count
+
+    # Отримуємо поточну кількість переглядів
+    current_views = await get_total_views_count()
+
+    # Отримуємо вчорашню статистику
+    yesterday_stats = await get_yesterday_stats()
+
+    if yesterday_stats:
+        yesterday_views = yesterday_stats.get("views_count", 0)
+        return current_views - yesterday_views
+
+    # Якщо немає даних за вчора - повертаємо загальну кількість
+    return current_views

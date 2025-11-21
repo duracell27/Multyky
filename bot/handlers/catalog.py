@@ -87,9 +87,13 @@ async def cmd_catalog(message: Message, state: FSMContext, bot: Bot):
     )
 
 
-@router.callback_query(F.data == "catalog:movies")
+@router.callback_query(F.data.startswith("catalog:movies"))
 async def show_movies(callback: CallbackQuery):
     """Показати список фільмів (згруповані за серіями)"""
+
+    # Отримуємо номер сторінки з callback_data
+    parts = callback.data.split(":")
+    page = int(parts[2]) if len(parts) > 2 else 0
 
     # Адміни бачать всі фільми, включаючи приховані
     is_admin = callback.from_user.id in config.ADMIN_IDS
@@ -102,46 +106,92 @@ async def show_movies(callback: CallbackQuery):
         await callback.answer()
         return
 
-    # Створюємо кнопки
-    buttons = []
+    # Створюємо список всіх елементів (групи + окремі фільми)
+    all_items = []
 
-    # Спочатку показуємо групи (серії фільмів)
+    # Спочатку додаємо групи (серії фільмів)
     for series_name in sorted(grouped.keys()):
         movies_in_series = grouped[series_name]
         count = len(movies_in_series)
-
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"📁 {series_name} ({count} {'фільм' if count == 1 else 'фільми' if count < 5 else 'фільмів'})",
-                callback_data=f"series_movies:{series_name}"
-            )
-        ])
+        all_items.append({
+            "type": "series",
+            "name": series_name,
+            "count": count
+        })
 
     # Потім окремі фільми
     for movie in standalone:
-        movie_id = str(movie["_id"])
+        all_items.append({
+            "type": "movie",
+            "movie": movie
+        })
 
-        # Перевіряємо чи фільм переглянутий
-        is_watched = await is_movie_watched(callback.from_user.id, movie_id)
-        watched_emoji = "👁 " if is_watched else ""
+    # Пагінація: 15 елементів на сторінку
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(all_items) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
 
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"{watched_emoji}🎬 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
-                callback_data=f"m:{movie_id}"
-            )
-        ])
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    items_page = all_items[start_idx:end_idx]
 
-    # Додаємо кнопку "Назад"
+    # Створюємо кнопки
+    buttons = []
+
+    for item in items_page:
+        if item["type"] == "series":
+            # Група фільмів
+            count = item["count"]
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"📁 {item['name']} ({count} {'фільм' if count == 1 else 'фільми' if count < 5 else 'фільмів'})",
+                    callback_data=f"series_movies:{item['name']}"
+                )
+            ])
+        else:
+            # Окремий фільм
+            movie = item["movie"]
+            movie_id = str(movie["_id"])
+
+            # Перевіряємо чи фільм переглянутий
+            is_watched = await is_movie_watched(callback.from_user.id, movie_id)
+            watched_emoji = "👁 " if is_watched else ""
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"{watched_emoji}🎬 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
+                    callback_data=f"m:{movie_id}"
+                )
+            ])
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"catalog:movies:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"catalog:movies:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    # Додаємо кнопку "Назад до каталогу"
     buttons.append([
         InlineKeyboardButton(text="◀️ Назад", callback_data="catalog:back")
     ])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
     await callback.message.edit_text(
-        "🎬 <b>Мультфільми:</b>\n\n"
-        "Виберіть серію або фільм для перегляду:",
+        f"🎬 <b>Мультфільми:</b>\n\n"
+        f"Виберіть серію або фільм для перегляду:{page_info}",
         reply_markup=keyboard
     )
     await callback.answer()

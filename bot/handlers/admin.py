@@ -2064,6 +2064,13 @@ async def process_edit_type(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.callback_query(EditContentStates.choosing_content, F.data.startswith("edittype:"))
+async def process_edit_pagination(callback: CallbackQuery, state: FSMContext):
+    """Обробка пагінації при виборі контенту для редагування"""
+    # Використовуємо ту ж функцію що і для початкового вибору
+    await process_edit_type(callback, state)
+
+
 @router.callback_query(EditContentStates.choosing_content, F.data.startswith("editmovie:") | F.data.startswith("editseries:"))
 async def process_edit_content_selection(callback: CallbackQuery, state: FSMContext):
     """Обробка вибору контенту для редагування"""
