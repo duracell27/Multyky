@@ -45,10 +45,15 @@ async def main():
     # Налаштування scheduler для щоденних звітів
     scheduler = AsyncIOScheduler()
 
-    # Додаємо завдання для щоденного звіту о 22:00
+    # Додаємо завдання для щоденного звіту о 22:00 (за київським часом)
+    from datetime import datetime
+    import pytz
+
+    kyiv_tz = pytz.timezone('Europe/Kiev')
+
     scheduler.add_job(
         send_daily_registration_report,
-        trigger=CronTrigger(hour=22, minute=0),
+        trigger=CronTrigger(hour=22, minute=0, timezone=kyiv_tz),
         args=[bot],
         id='daily_registration_report',
         name='Щоденний звіт про нові реєстрації',
@@ -57,7 +62,11 @@ async def main():
 
     # Запускаємо scheduler
     scheduler.start()
-    logging.info("⏰ Scheduler запущено. Щоденний звіт буде відправлятися о 22:00")
+
+    # Показуємо наступний запуск
+    next_run = scheduler.get_job('daily_registration_report').next_run_time
+    logging.info(f"⏰ Scheduler запущено. Щоденний звіт буде відправлятися о 22:00 (Europe/Kiev)")
+    logging.info(f"⏰ Наступний запуск: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
     # Налаштування меню команд
     from aiogram.types import BotCommand
