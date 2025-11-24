@@ -45,6 +45,11 @@ class MongoDB:
         """Колекція відео"""
         return self.db.videos
 
+    @property
+    def daily_stats(self):
+        """Колекція щоденної статистики"""
+        return self.db.daily_stats
+
 
 # Глобальний екземпляр
 db = MongoDB()
