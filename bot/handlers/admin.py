@@ -967,13 +967,27 @@ async def cmd_add_super_batch_movie(message: Message, state: FSMContext):
         await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
         return
 
+    await show_super_batch_series_page(message, state, page=0)
+
+
+async def show_super_batch_series_page(message: Message, state: FSMContext, page: int = 0):
+    """Показати сторінку серіалів для супер пакетного додавання"""
     # Отримуємо список серіалів (включно з прихованими для адмінів)
     series_list = await get_all_series_list(include_hidden=True)
 
+    # Пагінація: 20 серіалів на сторінку
+    ITEMS_PER_PAGE = 20
+    total_pages = (len(series_list) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE if series_list else 1
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    series_page = series_list[start_idx:end_idx] if series_list else []
+
     # Створюємо кнопки для вибору серіалу
     buttons = []
-    if series_list:
-        for series in series_list:
+    if series_page:
+        for series in series_page:
             series_id = str(series["_id"])
             buttons.append([
                 InlineKeyboardButton(
@@ -981,6 +995,22 @@ async def cmd_add_super_batch_movie(message: Message, state: FSMContext):
                     callback_data=f"super_sel_series:{series_id}"
                 )
             ])
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"super_page:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"super_page:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
 
     # Додаємо кнопку для створення нового серіалу
     buttons.append([
@@ -992,13 +1022,25 @@ async def cmd_add_super_batch_movie(message: Message, state: FSMContext):
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
     await message.answer(
-        "🚀 <b>Супер пакетне додавання серій</b>\n\n"
-        "Ця команда автоматично визначає сезон і епізод з caption відео.\n\n"
-        "📺 <b>Виберіть серіал для додавання серій:</b>",
+        f"🚀 <b>Супер пакетне додавання серій</b>\n\n"
+        f"Ця команда автоматично визначає сезон і епізод з caption відео.\n\n"
+        f"📺 <b>Виберіть серіал для додавання серій:</b>{page_info}",
         reply_markup=keyboard
     )
     await state.set_state(AddSuperBatchMovieStates.choosing_existing_series)
+
+
+@router.callback_query(AddSuperBatchMovieStates.choosing_existing_series, F.data.startswith("super_page:"))
+async def handle_super_batch_page(callback: CallbackQuery, state: FSMContext):
+    """Обробка навігації по сторінках для супер пакетного додавання"""
+    page = int(callback.data.split(":", 1)[1])
+
+    await callback.message.delete()
+    await show_super_batch_series_page(callback.message, state, page=page)
+    await callback.answer()
 
 
 @router.callback_query(AddSuperBatchMovieStates.choosing_existing_series, F.data.startswith("super_sel_series:"))
