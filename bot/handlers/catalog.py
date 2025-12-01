@@ -2,6 +2,7 @@ from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
+from datetime import datetime
 
 from bot.database.movies import (
     get_all_movies_list,
@@ -17,7 +18,8 @@ from bot.database.movies import (
     toggle_dislike,
     get_user_vote,
     get_grouped_movies,
-    get_movies_by_series_name
+    get_movies_by_series_name,
+    calculate_series_average_rating
 )
 from bot.database.users import (
     get_or_create_user,
@@ -87,12 +89,212 @@ async def cmd_catalog(message: Message, state: FSMContext, bot: Bot):
     )
 
 
+@router.callback_query(F.data.startswith("catalog:movies:new:"))
+async def show_movies_new(callback: CallbackQuery):
+    """Показати новинки (фільми 2025 року)"""
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[NEWMOVIES] Викликано обробник новинок! callback_data: {callback.data}")
+
+    # Отримуємо номер сторінки з callback_data
+    parts = callback.data.split(":")
+    page = int(parts[3]) if len(parts) > 3 else 0
+    logger.info(f"[NEWMOVIES] Сторінка: {page}")
+
+    # Адміни бачать всі фільми, включаючи приховані
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+
+    # Отримуємо всі фільми
+    grouped_data = await get_grouped_movies(include_hidden=is_admin)
+    grouped = grouped_data["grouped"]
+    standalone = grouped_data["standalone"]
+
+    # Збираємо всі фільми (і з груп, і окремі)
+    all_movies = []
+    for series_name, movies in grouped.items():
+        all_movies.extend(movies)
+    all_movies.extend(standalone)
+
+    # DEBUG: Виводимо інформацію про фільми
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Всього фільмів: {len(all_movies)}")
+    years = [m.get('year') for m in all_movies]
+    logger.info(f"Роки фільмів: {sorted(set(years))}")
+
+    # Фільтруємо тільки фільми 2025 року
+    new_movies = [m for m in all_movies if m.get('year') == 2025]
+    logger.info(f"Фільмів 2025 року: {len(new_movies)}")
+    if new_movies:
+        logger.info(f"Назви новинок: {[m.get('title') for m in new_movies]}")
+
+    if not new_movies:
+        await callback.answer("❌ Новинок 2025 року поки немає", show_alert=True)
+        return
+
+    # Сортуємо за рейтингом IMDb (від найвищого до найнижчого)
+    new_movies.sort(key=lambda x: x.get('imdb_rating', 0), reverse=True)
+
+    # Пагінація: 15 фільмів на сторінку
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(new_movies) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    movies_page = new_movies[start_idx:end_idx]
+
+    # Створюємо кнопки
+    buttons = []
+    for movie in movies_page:
+        movie_id = str(movie["_id"])
+
+        # Перевіряємо чи фільм переглянутий
+        is_watched = await is_movie_watched(callback.from_user.id, movie_id)
+        watched_emoji = "👁 " if is_watched else ""
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{watched_emoji}🎬 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
+                callback_data=f"m:{movie_id}"
+            )
+        ])
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"catalog:movies:new:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"catalog:movies:new:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    # Додаємо кнопку "Назад до каталогу"
+    buttons.append([
+        InlineKeyboardButton(text="◀️ Назад до каталогу", callback_data="catalog:movies")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await callback.message.edit_text(
+        f"🆕 <b>Новинки 2025:</b>\n\n"
+        f"Всього фільмів: {len(new_movies)}\n\n"
+        f"Виберіть фільм для перегляду:{page_info}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("catalog:movies:top:"))
+async def show_movies_top(callback: CallbackQuery):
+    """Показати топ фільмів за рейтингом IMDb"""
+
+    # Отримуємо номер сторінки з callback_data
+    parts = callback.data.split(":")
+    page = int(parts[3]) if len(parts) > 3 else 0
+
+    # Адміни бачать всі фільми, включаючи приховані
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+
+    # Отримуємо всі фільми
+    grouped_data = await get_grouped_movies(include_hidden=is_admin)
+    grouped = grouped_data["grouped"]
+    standalone = grouped_data["standalone"]
+
+    # Збираємо всі фільми (і з груп, і окремі)
+    all_movies = []
+    for series_name, movies in grouped.items():
+        all_movies.extend(movies)
+    all_movies.extend(standalone)
+
+    if not all_movies:
+        await callback.answer("❌ Немає фільмів", show_alert=True)
+        return
+
+    # Сортуємо за рейтингом IMDb (від найвищого до найнижчого)
+    all_movies.sort(key=lambda x: x.get('imdb_rating', 0), reverse=True)
+
+    # Пагінація: 15 фільмів на сторінку
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(all_movies) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    movies_page = all_movies[start_idx:end_idx]
+
+    # Створюємо кнопки
+    buttons = []
+    for movie in movies_page:
+        movie_id = str(movie["_id"])
+
+        # Перевіряємо чи фільм переглянутий
+        is_watched = await is_movie_watched(callback.from_user.id, movie_id)
+        watched_emoji = "👁 " if is_watched else ""
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{watched_emoji}🎬 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
+                callback_data=f"m:{movie_id}"
+            )
+        ])
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"catalog:movies:top:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"catalog:movies:top:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    # Додаємо кнопку "Назад до каталогу"
+    buttons.append([
+        InlineKeyboardButton(text="◀️ Назад до каталогу", callback_data="catalog:movies")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await callback.message.edit_text(
+        f"🏆 <b>Топ фільмів за рейтингом IMDb:</b>\n\n"
+        f"Всього фільмів: {len(all_movies)}\n\n"
+        f"Виберіть фільм для перегляду:{page_info}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("catalog:movies"))
 async def show_movies(callback: CallbackQuery):
     """Показати список фільмів (згруповані за серіями)"""
 
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[SHOWMOVIES] Отримано callback: {callback.data}")
+
     # Отримуємо номер сторінки з callback_data
     parts = callback.data.split(":")
+
+    logger.info(f"[SHOWMOVIES] Обробляємо як звичайний каталог")
     page = int(parts[2]) if len(parts) > 2 else 0
 
     # Адміни бачать всі фільми, включаючи приховані
@@ -113,10 +315,12 @@ async def show_movies(callback: CallbackQuery):
     for series_name in sorted(grouped.keys()):
         movies_in_series = grouped[series_name]
         count = len(movies_in_series)
+        avg_rating = await calculate_series_average_rating(movies_in_series)
         all_items.append({
             "type": "series",
             "name": series_name,
-            "count": count
+            "count": count,
+            "avg_rating": avg_rating
         })
 
     # Потім окремі фільми
@@ -142,9 +346,10 @@ async def show_movies(callback: CallbackQuery):
         if item["type"] == "series":
             # Група фільмів
             count = item["count"]
+            avg_rating = item["avg_rating"]
             buttons.append([
                 InlineKeyboardButton(
-                    text=f"📁 {item['name']} ({count} {'фільм' if count == 1 else 'фільми' if count < 5 else 'фільмів'})",
+                    text=f"📁 {item['name']} ({count} {'фільм' if count == 1 else 'фільми' if count < 5 else 'фільмів'}) ⭐️ {avg_rating}",
                     callback_data=f"series_movies:{item['name']}"
                 )
             ])
@@ -179,6 +384,41 @@ async def show_movies(callback: CallbackQuery):
 
     if nav_buttons:
         buttons.append(nav_buttons)
+
+    # Збираємо всі фільми (і з груп, і окремі) для підрахунку новинок
+    all_movies = []
+    for series_name, movies in grouped.items():
+        all_movies.extend(movies)
+    all_movies.extend(standalone)
+
+    # DEBUG: Виводимо інформацію про фільми в основному каталозі
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[CATALOG] Всього фільмів: {len(all_movies)}")
+    logger.info(f"[CATALOG] З груп: {sum(len(movies) for movies in grouped.values())}, Окремих: {len(standalone)}")
+    years = [m.get('year') for m in all_movies]
+    logger.info(f"[CATALOG] Роки фільмів: {sorted(set(years))}")
+
+    # Підраховуємо кількість новинок (фільми 2025 року)
+    new_movies_2025 = [m for m in all_movies if m.get('year') == 2025]
+    new_movies_count = len(new_movies_2025)
+    logger.info(f"[CATALOG] Фільмів 2025 року: {new_movies_count}")
+    if new_movies_2025:
+        logger.info(f"[CATALOG] Назви: {[m.get('title') for m in new_movies_2025]}")
+
+    # Додаємо кнопки "Новинки" і "Топ" на початку
+    filter_buttons = []
+    if new_movies_count > 0:
+        filter_buttons.append(
+            InlineKeyboardButton(text=f"🆕 Новинки ({new_movies_count})", callback_data="catalog:movies:new:0")
+        )
+    filter_buttons.append(
+        InlineKeyboardButton(text="🏆 Топ", callback_data="catalog:movies:top:0")
+    )
+
+    # Вставляємо кнопки фільтрів на початок списку кнопок
+    if filter_buttons:
+        buttons.insert(0, filter_buttons)
 
     # Додаємо кнопку "Назад до каталогу"
     buttons.append([
@@ -243,6 +483,167 @@ async def show_series_movies(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("catalog:series:new:"))
+async def show_series_new(callback: CallbackQuery):
+    """Показати новинки серіалів (2025 року)"""
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[NEWSERIES] Викликано обробник новинок серіалів! callback_data: {callback.data}")
+
+    # Отримуємо номер сторінки з callback_data
+    parts = callback.data.split(":")
+    page = int(parts[3]) if len(parts) > 3 else 0
+    logger.info(f"[NEWSERIES] Сторінка: {page}")
+
+    # Адміни бачать всі серіали, включаючи приховані
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+    all_series = await get_all_series_list(include_hidden=is_admin)
+
+    # Фільтруємо тільки серіали 2025 року
+    new_series = [s for s in all_series if s.get('year') == 2025]
+    logger.info(f"Серіалів 2025 року: {len(new_series)}")
+    if new_series:
+        logger.info(f"Назви новинок: {[s.get('title') for s in new_series]}")
+
+    if not new_series:
+        await callback.answer("❌ Новинок серіалів 2025 року поки немає", show_alert=True)
+        return
+
+    # Сортуємо за рейтингом IMDb (від найвищого до найнижчого)
+    new_series.sort(key=lambda x: x.get('imdb_rating', 0), reverse=True)
+
+    # Пагінація: 15 серіалів на сторінку
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(new_series) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    series_page = new_series[start_idx:end_idx]
+
+    # Створюємо кнопки
+    buttons = []
+    for show in series_page:
+        series_id = str(show["_id"])
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📺 {show['title']} ({show['year']}) ⭐️ {show['imdb_rating']}",
+                callback_data=f"s:{series_id}"
+            )
+        ])
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"catalog:series:new:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"catalog:series:new:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    # Додаємо кнопку "Назад до каталогу"
+    buttons.append([
+        InlineKeyboardButton(text="◀️ Назад до каталогу", callback_data="catalog:series")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await callback.message.edit_text(
+        f"🆕 <b>Новинки серіалів 2025:</b>\n\n"
+        f"Всього серіалів: {len(new_series)}\n\n"
+        f"Виберіть серіал для перегляду:{page_info}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("catalog:series:top:"))
+async def show_series_top(callback: CallbackQuery):
+    """Показати топ серіалів за рейтингом IMDb"""
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[TOPSERIES] Викликано обробник топ серіалів! callback_data: {callback.data}")
+
+    # Отримуємо номер сторінки з callback_data
+    parts = callback.data.split(":")
+    page = int(parts[3]) if len(parts) > 3 else 0
+
+    # Адміни бачать всі серіали, включаючи приховані
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+    all_series = await get_all_series_list(include_hidden=is_admin)
+
+    if not all_series:
+        await callback.answer("❌ Немає серіалів", show_alert=True)
+        return
+
+    # Сортуємо за рейтингом IMDb (від найвищого до найнижчого)
+    all_series.sort(key=lambda x: x.get('imdb_rating', 0), reverse=True)
+
+    # Пагінація: 15 серіалів на сторінку
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(all_series) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    series_page = all_series[start_idx:end_idx]
+
+    # Створюємо кнопки
+    buttons = []
+    for show in series_page:
+        series_id = str(show["_id"])
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📺 {show['title']} ({show['year']}) ⭐️ {show['imdb_rating']}",
+                callback_data=f"s:{series_id}"
+            )
+        ])
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"catalog:series:top:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"catalog:series:top:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    # Додаємо кнопку "Назад до каталогу"
+    buttons.append([
+        InlineKeyboardButton(text="◀️ Назад до каталогу", callback_data="catalog:series")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await callback.message.edit_text(
+        f"🏆 <b>Топ серіалів за рейтингом IMDb:</b>\n\n"
+        f"Всього серіалів: {len(all_series)}\n\n"
+        f"Виберіть серіал для перегляду:{page_info}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "catalog:series")
 async def show_series(callback: CallbackQuery):
     """Показати список серіалів"""
@@ -256,8 +657,27 @@ async def show_series(callback: CallbackQuery):
         await callback.answer()
         return
 
+    # Підраховуємо кількість новинок (серіали 2025 року)
+    new_series_2025 = [s for s in series if s.get('year') == 2025]
+    new_series_count = len(new_series_2025)
+
     # Створюємо кнопки для кожного серіалу
     buttons = []
+
+    # Додаємо кнопки "Новинки" і "Топ" на початку
+    filter_buttons = []
+    if new_series_count > 0:
+        filter_buttons.append(
+            InlineKeyboardButton(text=f"🆕 Новинки ({new_series_count})", callback_data="catalog:series:new:0")
+        )
+    filter_buttons.append(
+        InlineKeyboardButton(text="🏆 Топ", callback_data="catalog:series:top:0")
+    )
+
+    # Вставляємо кнопки фільтрів на початок списку кнопок
+    if filter_buttons:
+        buttons.append(filter_buttons)
+
     for show in series:
         # В новій структурі використовуємо _id
         series_id = str(show["_id"])

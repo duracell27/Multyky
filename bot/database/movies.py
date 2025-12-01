@@ -710,6 +710,25 @@ async def get_movies_by_series_name(series_name: str, include_hidden: bool = Fal
     return await cursor.to_list(length=None)
 
 
+async def calculate_series_average_rating(movies: list) -> float:
+    """
+    Обчислити середній IMDB рейтинг для серії фільмів
+
+    Args:
+        movies: список фільмів у серії
+
+    Returns:
+        Середній рейтинг (округлений до 1 знаку після коми)
+    """
+    if not movies:
+        return 0.0
+
+    total_rating = sum(movie.get("imdb_rating", 0) for movie in movies)
+    average = total_rating / len(movies)
+
+    return round(average, 1)
+
+
 async def get_grouped_movies(include_hidden: bool = False) -> dict:
     """
     Отримати фільми, згруповані за series_name

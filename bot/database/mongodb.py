@@ -50,6 +50,11 @@ class MongoDB:
         """Колекція щоденної статистики"""
         return self.db.daily_stats
 
+    @property
+    def broadcasts(self):
+        """Колекція розсилок"""
+        return self.db.broadcasts
+
 
 # Глобальний екземпляр
 db = MongoDB()

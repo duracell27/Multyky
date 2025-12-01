@@ -8,8 +8,23 @@ from apscheduler.triggers.cron import CronTrigger
 
 from bot.config import config
 from bot.database import db
-from bot.handlers import common_router, admin_router, catalog_router
+from bot.handlers import common_router, admin_router, catalog_router, broadcast_router
 from bot.database.users import send_daily_registration_report
+from bot.database.broadcasts import get_scheduled_broadcasts
+from bot.handlers.broadcast import send_broadcast_to_users
+
+
+async def check_and_send_scheduled_broadcasts(bot: Bot):
+    """Перевірити і відправити заплановані розсилки"""
+    broadcasts = await get_scheduled_broadcasts()
+
+    for broadcast in broadcasts:
+        broadcast_id = str(broadcast['_id'])
+        try:
+            logging.info(f"Відправка запланованої розсилки: {broadcast['title']}")
+            await send_broadcast_to_users(bot, broadcast_id)
+        except Exception as e:
+            logging.error(f"Помилка при відправці розсилки {broadcast_id}: {e}")
 
 
 async def main():
@@ -38,6 +53,7 @@ async def main():
     dp.include_router(common_router)
     dp.include_router(admin_router)
     dp.include_router(catalog_router)
+    dp.include_router(broadcast_router)
 
     # Підключення до бази даних
     await db.connect()
@@ -57,6 +73,16 @@ async def main():
         args=[bot],
         id='daily_registration_report',
         name='Щоденний звіт про нові реєстрації',
+        replace_existing=True
+    )
+
+    # Додаємо завдання для перевірки запланованих розсилок (кожні 5 хвилин)
+    scheduler.add_job(
+        check_and_send_scheduled_broadcasts,
+        trigger=CronTrigger(minute='*/5'),  # Кожні 5 хвилин
+        args=[bot],
+        id='check_scheduled_broadcasts',
+        name='Перевірка запланованих розсилок',
         replace_existing=True
     )
 

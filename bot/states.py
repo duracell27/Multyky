@@ -71,3 +71,13 @@ class HelpStates(StatesGroup):
     """Стани для допомоги користувачам"""
     waiting_for_request = State()  # Чекаємо запит на мультфільм
     waiting_for_message = State()  # Чекаємо повідомлення адміну
+
+
+class BroadcastStates(StatesGroup):
+    """Стани для створення розсилки"""
+    waiting_for_title = State()  # Чекаємо заголовок розсилки
+    waiting_for_description = State()  # Чекаємо опис розсилки
+    waiting_for_photo = State()  # Чекаємо фото (опціонально)
+    choosing_content = State()  # Вибір фільмів/серіалів для прикріплення
+    waiting_for_schedule_time = State()  # Чекаємо час для планування (опціонально)
+    confirming_broadcast = State()  # Підтвердження перед відправкою
