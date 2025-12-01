@@ -35,8 +35,8 @@ async def send_broadcast_to_users(bot: Bot, broadcast_id: str) -> dict:
     if not broadcast:
         return {"error": "Broadcast not found"}
 
-    # Отримуємо всіх користувачів (які мають telegram_id)
-    users_cursor = db.users.find({"telegram_id": {"$exists": True}})
+    # Отримуємо всіх користувачів (які мають user_id)
+    users_cursor = db.users.find({"user_id": {"$exists": True}})
     users = await users_cursor.to_list(length=None)
 
     stats = {
@@ -75,7 +75,7 @@ async def send_broadcast_to_users(bot: Bot, broadcast_id: str) -> dict:
             if broadcast.get('photo_file_id'):
                 # Відправляємо з фото
                 await bot.send_photo(
-                    chat_id=user['telegram_id'],
+                    chat_id=user['user_id'],
                     photo=broadcast['photo_file_id'],
                     caption=message_text,
                     reply_markup=keyboard
@@ -83,7 +83,7 @@ async def send_broadcast_to_users(bot: Bot, broadcast_id: str) -> dict:
             else:
                 # Відправляємо тільки текст
                 await bot.send_message(
-                    chat_id=user['telegram_id'],
+                    chat_id=user['user_id'],
                     text=message_text,
                     reply_markup=keyboard
                 )
@@ -95,7 +95,7 @@ async def send_broadcast_to_users(bot: Bot, broadcast_id: str) -> dict:
 
         except Exception as e:
             stats['sent_failed'] += 1
-            logger.error(f"Failed to send broadcast to user {user['telegram_id']}: {e}")
+            logger.error(f"Failed to send broadcast to user {user['user_id']}: {e}")
 
     # Оновлюємо статус розсилки
     await mark_broadcast_as_sent(broadcast_id, stats)
@@ -333,7 +333,7 @@ async def show_broadcast_preview(callback: CallbackQuery, state: FSMContext):
     content_ids = data.get('content_ids', [])
 
     # Підраховуємо кількість користувачів
-    users_count = await db.users.count_documents({"telegram_id": {"$exists": True}})
+    users_count = await db.users.count_documents({"user_id": {"$exists": True}})
 
     # Формуємо текст повідомлення
     preview_text = f"<b>{title}</b>\n\n{description}"
