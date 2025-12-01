@@ -35,8 +35,8 @@ async def send_broadcast_to_users(bot: Bot, broadcast_id: str) -> dict:
     if not broadcast:
         return {"error": "Broadcast not found"}
 
-    # Отримуємо всіх активних користувачів
-    users_cursor = db.users.find({"is_active": True})
+    # Отримуємо всіх користувачів (які мають telegram_id)
+    users_cursor = db.users.find({"telegram_id": {"$exists": True}})
     users = await users_cursor.to_list(length=None)
 
     stats = {
@@ -332,6 +332,9 @@ async def show_broadcast_preview(callback: CallbackQuery, state: FSMContext):
     photo_file_id = data.get('photo_file_id')
     content_ids = data.get('content_ids', [])
 
+    # Підраховуємо кількість користувачів
+    users_count = await db.users.count_documents({"telegram_id": {"$exists": True}})
+
     # Формуємо текст повідомлення
     preview_text = f"<b>{title}</b>\n\n{description}"
 
@@ -372,7 +375,8 @@ async def show_broadcast_preview(callback: CallbackQuery, state: FSMContext):
     ])
 
     await callback.message.answer(
-        "Виберіть дію:",
+        f"👥 <b>Розсилка буде відправлена {users_count} користувачам</b>\n\n"
+        f"Виберіть дію:",
         reply_markup=keyboard
     )
     await callback.answer()
