@@ -42,7 +42,8 @@ async def send_broadcast_to_users(bot: Bot, broadcast_id: str) -> dict:
     stats = {
         "total_users": len(users),
         "sent_success": 0,
-        "sent_failed": 0
+        "sent_failed": 0,
+        "errors": []  # Список помилок
     }
 
     # Формуємо текст повідомлення
@@ -95,6 +96,13 @@ async def send_broadcast_to_users(bot: Bot, broadcast_id: str) -> dict:
 
         except Exception as e:
             stats['sent_failed'] += 1
+            error_info = {
+                "user_id": user['user_id'],
+                "username": user.get('username', 'немає'),
+                "first_name": user.get('first_name', 'немає'),
+                "error": str(e)
+            }
+            stats['errors'].append(error_info)
             logger.error(f"Failed to send broadcast to user {user['user_id']}: {e}")
 
     # Оновлюємо статус розсилки
@@ -208,15 +216,28 @@ async def ask_for_content_selection(message: Message, state: FSMContext):
 @router.callback_query(F.data == "broadcast:add_movies", BroadcastStates.choosing_content)
 async def show_movies_for_broadcast(callback: CallbackQuery, state: FSMContext):
     """Показати список фільмів для вибору"""
+    await show_movies_page_for_broadcast(callback, state, page=0)
+
+
+async def show_movies_page_for_broadcast(callback: CallbackQuery, state: FSMContext, page: int = 0):
+    """Показати сторінку фільмів для вибору в розсилку"""
     movies = await get_all_movies_list(include_hidden=False)
 
     if not movies:
         await callback.answer("❌ Немає фільмів для додавання", show_alert=True)
         return
 
-    # Беремо перші 10 фільмів
+    # Пагінація: 15 фільмів на сторінку
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(movies) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    movies_page = movies[start_idx:end_idx]
+
     buttons = []
-    for movie in movies[:10]:
+    for movie in movies_page:
         movie_id = str(movie["_id"])
         buttons.append([
             InlineKeyboardButton(
@@ -225,30 +246,68 @@ async def show_movies_for_broadcast(callback: CallbackQuery, state: FSMContext):
             )
         ])
 
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="broadcast:back_to_content")])
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"broadcast:movies_page:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"broadcast:movies_page:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад до вибору", callback_data="broadcast:back_to_content")])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
     await callback.message.edit_text(
-        "🎬 <b>Вибір фільмів</b>\n\n"
-        "Виберіть фільм для додавання:",
+        f"🎬 <b>Вибір фільмів</b>\n\n"
+        f"Виберіть фільм для додавання:{page_info}",
         reply_markup=keyboard
     )
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("broadcast:movies_page:"), BroadcastStates.choosing_content)
+async def handle_movies_page_broadcast(callback: CallbackQuery, state: FSMContext):
+    """Обробка навігації по сторінках фільмів"""
+    page = int(callback.data.split(":", 2)[2])
+    await show_movies_page_for_broadcast(callback, state, page=page)
+
+
 @router.callback_query(F.data == "broadcast:add_series", BroadcastStates.choosing_content)
 async def show_series_for_broadcast(callback: CallbackQuery, state: FSMContext):
     """Показати список серіалів для вибору"""
+    await show_series_page_for_broadcast(callback, state, page=0)
+
+
+async def show_series_page_for_broadcast(callback: CallbackQuery, state: FSMContext, page: int = 0):
+    """Показати сторінку серіалів для вибору в розсилку"""
     series = await get_all_series_list(include_hidden=False)
 
     if not series:
         await callback.answer("❌ Немає серіалів для додавання", show_alert=True)
         return
 
-    # Беремо перші 10 серіалів
+    # Пагінація: 15 серіалів на сторінку
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(series) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    series_page = series[start_idx:end_idx]
+
     buttons = []
-    for show in series[:10]:
+    for show in series_page:
         series_id = str(show["_id"])
         buttons.append([
             InlineKeyboardButton(
@@ -257,16 +316,41 @@ async def show_series_for_broadcast(callback: CallbackQuery, state: FSMContext):
             )
         ])
 
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="broadcast:back_to_content")])
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"broadcast:series_page:{page-1}"
+        ))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Далі ▶️",
+            callback_data=f"broadcast:series_page:{page+1}"
+        ))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад до вибору", callback_data="broadcast:back_to_content")])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
     await callback.message.edit_text(
-        "📺 <b>Вибір серіалів</b>\n\n"
-        "Виберіть серіал для додавання:",
+        f"📺 <b>Вибір серіалів</b>\n\n"
+        f"Виберіть серіал для додавання:{page_info}",
         reply_markup=keyboard
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("broadcast:series_page:"), BroadcastStates.choosing_content)
+async def handle_series_page_broadcast(callback: CallbackQuery, state: FSMContext):
+    """Обробка навігації по сторінках серіалів"""
+    page = int(callback.data.split(":", 2)[2])
+    await show_series_page_for_broadcast(callback, state, page=page)
 
 
 @router.callback_query(F.data.startswith("broadcast:select_movie:"), BroadcastStates.choosing_content)
@@ -407,13 +491,37 @@ async def send_broadcast_now(callback: CallbackQuery, state: FSMContext, bot: Bo
 
     await state.clear()
 
-    await callback.message.edit_text(
+    result_text = (
         f"✅ <b>Розсилку відправлено!</b>\n\n"
         f"📊 Статистика:\n"
         f"👥 Всього користувачів: {stats['total_users']}\n"
         f"✅ Успішно відправлено: {stats['sent_success']}\n"
         f"❌ Помилок: {stats['sent_failed']}"
     )
+
+    await callback.message.edit_text(result_text)
+
+    # Якщо є помилки, відправляємо окреме повідомлення з деталями
+    if stats['sent_failed'] > 0 and stats.get('errors'):
+        errors_text = "❌ <b>Деталі помилок:</b>\n\n"
+
+        # Показуємо перші 20 помилок
+        for i, error in enumerate(stats['errors'][:20], 1):
+            user_name = error['first_name']
+            username = f"@{error['username']}" if error['username'] != 'немає' else 'немає username'
+            errors_text += (
+                f"{i}. <b>{user_name}</b> ({username})\n"
+                f"   ID: <code>{error['user_id']}</code>\n"
+                f"   Помилка: {error['error']}\n\n"
+            )
+
+        if len(stats['errors']) > 20:
+            errors_text += f"... і ще {len(stats['errors']) - 20} помилок"
+
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=errors_text
+        )
 
 
 @router.callback_query(F.data == "broadcast:schedule", BroadcastStates.confirming_broadcast)
@@ -507,11 +615,20 @@ async def show_broadcasts_list(callback: CallbackQuery):
             'cancelled': '❌'
         }.get(broadcast['status'], '❓')
 
-        title = broadcast['title'][:30] + '...' if len(broadcast['title']) > 30 else broadcast['title']
+        title = broadcast['title'][:25] + '...' if len(broadcast['title']) > 25 else broadcast['title']
+
+        # Додаємо дату
+        date_str = ""
+        if broadcast.get('sent_at'):
+            date_str = broadcast['sent_at'].strftime(' %d.%m.%y')
+        elif broadcast.get('scheduled_time'):
+            date_str = broadcast['scheduled_time'].strftime(' %d.%m.%y')
+        elif broadcast.get('created_at'):
+            date_str = broadcast['created_at'].strftime(' %d.%m.%y')
 
         buttons.append([
             InlineKeyboardButton(
-                text=f"{status_emoji} {title}",
+                text=f"{status_emoji} {title}{date_str}",
                 callback_data=f"broadcast:view:{broadcast_id}"
             )
         ])
@@ -523,6 +640,106 @@ async def show_broadcasts_list(callback: CallbackQuery):
     await callback.message.edit_text(
         "📋 <b>Список розсилок:</b>\n\n"
         "Виберіть розсилку для перегляду:",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("broadcast:view:"))
+async def view_broadcast_details(callback: CallbackQuery):
+    """Показати деталі розсилки"""
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("❌ Недостатньо прав")
+        return
+
+    broadcast_id = callback.data.split(":", 2)[2]
+    broadcast = await get_broadcast(broadcast_id)
+
+    if not broadcast:
+        await callback.answer("❌ Розсилку не знайдено", show_alert=True)
+        return
+
+    # Статус
+    status_emoji = {
+        'draft': '📝',
+        'scheduled': '📅',
+        'sent': '✅',
+        'cancelled': '❌'
+    }.get(broadcast['status'], '❓')
+
+    status_text = {
+        'draft': 'Чернетка',
+        'scheduled': 'Заплановано',
+        'sent': 'Відправлено',
+        'cancelled': 'Скасовано'
+    }.get(broadcast['status'], 'Невідомо')
+
+    # Формуємо текст з деталями
+    details_text = (
+        f"📢 <b>Деталі розсилки</b>\n\n"
+        f"<b>Назва:</b> {broadcast['title']}\n"
+        f"<b>Опис:</b> {broadcast['description']}\n\n"
+        f"<b>Статус:</b> {status_emoji} {status_text}\n"
+    )
+
+    # Додаємо дату створення
+    if broadcast.get('created_at'):
+        created_str = broadcast['created_at'].strftime('%d.%m.%Y о %H:%M')
+        details_text += f"<b>Створено:</b> {created_str}\n"
+
+    # Додаємо дату планування
+    if broadcast.get('scheduled_time'):
+        scheduled_str = broadcast['scheduled_time'].strftime('%d.%m.%Y о %H:%M')
+        details_text += f"<b>Заплановано на:</b> {scheduled_str}\n"
+
+    # Додаємо дату відправки
+    if broadcast.get('sent_at'):
+        sent_str = broadcast['sent_at'].strftime('%d.%m.%Y о %H:%M')
+        details_text += f"<b>Відправлено:</b> {sent_str}\n"
+
+    # Додаємо статистику якщо є
+    if broadcast.get('stats'):
+        stats = broadcast['stats']
+        details_text += (
+            f"\n📊 <b>Статистика:</b>\n"
+            f"👥 Всього користувачів: {stats.get('total_users', 0)}\n"
+            f"✅ Успішно відправлено: {stats.get('sent_success', 0)}\n"
+            f"❌ Помилок: {stats.get('sent_failed', 0)}\n"
+        )
+
+        # Якщо є помилки, показуємо їх
+        if stats.get('sent_failed', 0) > 0 and stats.get('errors'):
+            details_text += "\n❌ <b>Деталі помилок:</b>\n\n"
+
+            # Показуємо перші 10 помилок
+            for i, error in enumerate(stats['errors'][:10], 1):
+                user_name = error.get('first_name', 'немає')
+                username = error.get('username', 'немає')
+                username_str = f"@{username}" if username != 'немає' else 'немає username'
+                details_text += (
+                    f"{i}. <b>{user_name}</b> ({username_str})\n"
+                    f"   ID: <code>{error.get('user_id', 'немає')}</code>\n"
+                    f"   Помилка: {error.get('error', 'немає')}\n\n"
+                )
+
+            if len(stats['errors']) > 10:
+                details_text += f"... і ще {len(stats['errors']) - 10} помилок\n"
+
+    # Додаємо інформацію про контент
+    if broadcast.get('content_ids'):
+        details_text += f"\n🎬 <b>Контент:</b> {len(broadcast['content_ids'])} шт.\n"
+
+    # Додаємо інформацію про фото
+    if broadcast.get('photo_file_id'):
+        details_text += "🖼 <b>Є фото</b>\n"
+
+    # Кнопка назад
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад до списку", callback_data="broadcast:list")]
+    ])
+
+    await callback.message.edit_text(
+        details_text,
         reply_markup=keyboard
     )
     await callback.answer()
