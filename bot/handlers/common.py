@@ -1,5 +1,5 @@
 from aiogram import Router, F, Bot
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
 
@@ -8,7 +8,9 @@ from bot.database.users import (
     get_users_count,
     get_active_users_count,
     get_watch_history,
-    get_watch_later
+    get_watch_later,
+    add_to_watch_history,
+    is_movie_watched
 )
 from bot.database.movies import (
     get_movies_count,
@@ -19,12 +21,202 @@ from bot.database.movies import (
     get_total_views_count,
     get_total_storage_size,
     get_top_content_by_views,
-    search_content
+    search_content,
+    increment_views,
+    get_series_seasons
 )
 from bot.config import config
 from bot.states import SearchStates, HelpStates
 
 router = Router()
+
+
+async def send_movie_from_deeplink(message: Message, bot: Bot, movie_id: str, is_admin: bool):
+    """Відправити мультфільм користувачу через deep link"""
+    from bot.handlers.catalog import create_content_poster_buttons
+
+    # Отримуємо фільм за ID
+    movie = await get_movie_by_id(movie_id)
+
+    if not movie:
+        await message.answer(
+            "❌ На жаль, мультфільм не знайдено.\n\n"
+            "Можливо, він був видалений або посилання некоректне.\n"
+            "Скористайся /catalog для перегляду доступних мультфільмів.",
+            reply_markup=get_main_keyboard(is_admin)
+        )
+        return
+
+    # Збільшуємо лічільник переглядів
+    await increment_views(movie_id, message.from_user.id)
+
+    # Додаємо в історію перегляду
+    await add_to_watch_history(message.from_user.id, movie_id, movie)
+
+    # Відправляємо постер фільму з розширеною інформацією
+    rating = movie.get('rating', 0)
+    views = movie.get('views_count', 0)
+
+    poster_caption = (
+        f"🎬 <b>{movie['title']}</b>\n\n"
+        f"📅 Рік: {movie['year']}\n"
+        f"⭐️ IMDB: {movie['imdb_rating']}\n"
+        f"⭐️ Рейтинг: {rating}\n"
+        f"👁 Перегляди: {views}"
+    )
+
+    # Створюємо кнопки для постера
+    poster_buttons = await create_content_poster_buttons(movie_id, message.from_user.id)
+
+    try:
+        await bot.send_photo(
+            chat_id=message.from_user.id,
+            photo=movie['poster_file_id'],
+            caption=poster_caption,
+            reply_markup=poster_buttons
+        )
+    except Exception:
+        pass
+
+    # Формуємо підпис для відео
+    caption = (
+        f"🎬 <b>{movie['title']}</b>\n\n"
+        f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики | Мультфільми Українською</a>"
+    )
+
+    # Перевіряємо чи фільм вже переглянутий
+    watched = await is_movie_watched(message.from_user.id, movie_id)
+
+    # Створюємо кнопку "Переглянуто"
+    watched_text = "✅ Переглянуто" if watched else "Відмітити 👁"
+    video_buttons = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=watched_text,
+                callback_data=f"watched:{movie_id}"
+            )
+        ]
+    ])
+
+    # Відправляємо відео
+    try:
+        video_file_id = movie.get("video_file_id")
+        video_type = movie.get("video_type", "video")
+
+        if video_type == "video":
+            await bot.send_video(
+                chat_id=message.from_user.id,
+                video=video_file_id,
+                caption=caption,
+                reply_markup=video_buttons
+            )
+        else:
+            await bot.send_document(
+                chat_id=message.from_user.id,
+                document=video_file_id,
+                caption=caption,
+                reply_markup=video_buttons
+            )
+
+        # Надсилаємо клавіатуру
+        await message.answer("Приємного перегляду! 🍿", reply_markup=get_main_keyboard(is_admin))
+
+    except Exception as e:
+        import logging
+        logging.error(f"Deep link: Не вдалося відправити '{movie.get('title')}': {str(e)}")
+        await message.answer(
+            "❌ На жаль, не вдалося відправити відео.\n"
+            "Спробуй знайти мультфільм через /catalog",
+            reply_markup=get_main_keyboard(is_admin)
+        )
+
+
+async def send_series_from_deeplink(message: Message, bot: Bot, series_id: str, is_admin: bool):
+    """Відправити серіал користувачу через deep link - показує сезони"""
+    from bot.handlers.catalog import create_content_poster_buttons
+
+    # Отримуємо інформацію про серіал за ID
+    series_info = await get_movie_by_id(series_id)
+
+    if not series_info:
+        await message.answer(
+            "❌ На жаль, серіал не знайдено.\n\n"
+            "Можливо, він був видалений або посилання некоректне.\n"
+            "Скористайся /catalog для перегляду доступних мультсеріалів.",
+            reply_markup=get_main_keyboard(is_admin)
+        )
+        return
+
+    title = series_info["title"]
+    seasons = await get_series_seasons(series_id)
+
+    if not seasons:
+        await message.answer(
+            f"❌ Не знайдено сезонів для серіалу '{title}'.\n"
+            "Скористайся /catalog для перегляду інших мультсеріалів.",
+            reply_markup=get_main_keyboard(is_admin)
+        )
+        return
+
+    # Відправляємо постер серіалу
+    rating = series_info.get('rating', 0)
+    views = series_info.get('views_count', 0)
+
+    poster_caption = (
+        f"📺 <b>{series_info['title']}</b>\n\n"
+        f"📅 Рік: {series_info['year']}\n"
+        f"⭐️ IMDB: {series_info['imdb_rating']}\n"
+        f"⭐️ Рейтинг: {rating}\n"
+        f"👁 Перегляди: {views}"
+    )
+
+    poster_buttons = await create_content_poster_buttons(series_id, message.from_user.id)
+
+    try:
+        await bot.send_photo(
+            chat_id=message.from_user.id,
+            photo=series_info.get('poster_file_id'),
+            caption=poster_caption,
+            reply_markup=poster_buttons
+        )
+    except Exception:
+        pass
+
+    # Створюємо кнопки для сезонів (максимум перші 5)
+    buttons = []
+    for season in seasons[:5]:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📺 Сезон {season}",
+                callback_data=f"sn:{series_id}:{season}:0"
+            )
+        ])
+
+    # Якщо більше 5 сезонів - додаємо кнопку "Далі"
+    if len(seasons) > 5:
+        buttons.append([
+            InlineKeyboardButton(
+                text="Далі ▶️",
+                callback_data=f"s:{series_id}:1"
+            )
+        ])
+
+    # Кнопка каталогу
+    buttons.append([
+        InlineKeyboardButton(text="📺 Каталог мультсеріалів", callback_data="catalog:series")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
+        f"📺 <b>{title}</b>\n\n"
+        f"Всього сезонів: {len(seasons)}\n"
+        f"Вибери сезон для перегляду 👇",
+        reply_markup=keyboard
+    )
+
+    # Надсилаємо клавіатуру
+    await message.answer("Приємного перегляду! 🍿", reply_markup=get_main_keyboard(is_admin))
 
 
 def get_main_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
@@ -49,8 +241,8 @@ def get_main_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext, bot: Bot):
-    """Обробник команди /start - автоматично реєструє користувача"""
+async def cmd_start(message: Message, state: FSMContext, bot: Bot, command: CommandObject):
+    """Обробник команди /start - автоматично реєструє користувача та підтримує deep linking"""
 
     # Очищаємо стан (наприклад, якщо користувач був у пошуку)
     await state.clear()
@@ -58,15 +250,32 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     # Автоматична реєстрація користувача
     user = await get_or_create_user(message.from_user, bot)
 
+    # Перевіряємо чи користувач є адміністратором
+    is_admin = message.from_user.id in config.ADMIN_IDS
+
+    # Перевіряємо чи є deep link параметр
+    if command.args:
+        deep_link = command.args.strip()
+
+        # Обробка deep link для мультфільму: m_<id>
+        if deep_link.startswith("m_"):
+            movie_id = deep_link[2:]  # Видаляємо "m_"
+            await send_movie_from_deeplink(message, bot, movie_id, is_admin)
+            return
+
+        # Обробка deep link для серіалу: s_<id>
+        elif deep_link.startswith("s_"):
+            series_id = deep_link[2:]  # Видаляємо "s_"
+            await send_series_from_deeplink(message, bot, series_id, is_admin)
+            return
+
+    # Звичайний /start без параметрів
     # Отримуємо кількість мультфільмів та серіалів
     movies_count = await get_movies_only_count()
     series_count = await get_series_only_count()
 
     # Перевіряємо чи це новий користувач
     is_new_user = user.get("registered_at") == user.get("last_activity")
-
-    # Перевіряємо чи користувач є адміністратором
-    is_admin = message.from_user.id in config.ADMIN_IDS
 
     if is_new_user:
         welcome_text = (

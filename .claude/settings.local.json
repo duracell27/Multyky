@@ -15,7 +15,8 @@
       "Bash(pip install:*)",
       "Bash(./venv/bin/python3:*)",
       "Bash(pgrep:*)",
-      "Bash(kill:*)"
+      "Bash(kill:*)",
+      "Bash(pip3 install:*)"
     ],
     "deny": [],
     "ask": []
