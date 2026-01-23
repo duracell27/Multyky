@@ -3370,10 +3370,12 @@ async def process_anime_batch_video(message: Message, state: FSMContext):
         await state.update_data(received_videos=received)
 
         count = len(received)
-        if count % 5 == 0:
+        # Показуємо повідомлення тільки кожні 10 серій (щоб уникнути спаму)
+        if count % 10 == 0:
             await message.answer(f"✅ Додано {count} серій...")
-        else:
-            await message.answer(f"✅ S{season}E{episode} додано")
+        # Для першої серії показуємо підтвердження
+        elif count == 1:
+            await message.answer(f"✅ S{season}E{episode} додано. Продовжуйте надсилати відео...")
     else:
         await message.answer(f"❌ Помилка додавання S{season}E{episode}")
 

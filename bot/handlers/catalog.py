@@ -1991,6 +1991,7 @@ async def show_anime_seasons(callback: CallbackQuery, bot: Bot):
     page_info = f"Сторінка {page + 1}/{total_pages}" if total_pages > 1 else ""
 
     if page == 0:
+        # На першій сторінці: спочатку постер, потім вибір сезонів
         rating = series_info.get('rating', 0)
         views = series_info.get('views_count', 0)
 
@@ -2002,6 +2003,13 @@ async def show_anime_seasons(callback: CallbackQuery, bot: Bot):
             f"👁 Перегляди: {views}"
         )
 
+        # Видаляємо попереднє повідомлення
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+
+        # Спочатку відправляємо постер
         try:
             poster_buttons = await create_content_poster_buttons(series_id, callback.from_user.id)
             await bot.send_photo(
@@ -2013,11 +2021,21 @@ async def show_anime_seasons(callback: CallbackQuery, bot: Bot):
         except Exception:
             pass
 
-    await callback.message.edit_text(
-        f"🎌 <b>{title}</b>\n\n"
-        f"Виберіть сезон: (Всього сезонів: {len(seasons)})\n{page_info}",
-        reply_markup=keyboard
-    )
+        # Потім відправляємо вибір сезонів як нове повідомлення
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=f"🎌 <b>{title}</b>\n\n"
+                 f"Виберіть сезон: (Всього сезонів: {len(seasons)})\n{page_info}",
+            reply_markup=keyboard
+        )
+    else:
+        # На інших сторінках просто редагуємо повідомлення
+        await callback.message.edit_text(
+            f"🎌 <b>{title}</b>\n\n"
+            f"Виберіть сезон: (Всього сезонів: {len(seasons)})\n{page_info}",
+            reply_markup=keyboard
+        )
+
     await callback.answer()
 
 
@@ -2129,17 +2147,59 @@ async def send_anime_episode(callback: CallbackQuery, bot: Bot):
         video_type = episode_data.get("video_type", "video")
 
         if video_type == "video":
-            await bot.send_video(
+            sent_message = await bot.send_video(
                 chat_id=callback.from_user.id,
                 video=video_file_id,
                 caption=caption
             )
         else:
-            await bot.send_document(
+            sent_message = await bot.send_document(
                 chat_id=callback.from_user.id,
                 document=video_file_id,
                 caption=caption
             )
+
+        # Шукаємо наступну серію
+        current_season = season
+        current_episode = episode
+
+        # Перевіряємо чи є наступна серія в поточному сезоні
+        next_episode = await get_episode(series_id, current_season, current_episode + 1)
+
+        # Створюємо кнопку для наступної серії
+        buttons = []
+        if next_episode:
+            # Є наступна серія в поточному сезоні
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"▶️ Наступна серія {current_episode + 1}",
+                    callback_data=f"ae:{series_id}:{current_season}:{current_episode + 1}"
+                )
+            ])
+        else:
+            # Перевіряємо чи є наступний сезон
+            all_seasons = await get_series_seasons(series_id)
+            if current_season + 1 in all_seasons:
+                # Перевіряємо чи є перша серія наступного сезону
+                first_episode = await get_episode(series_id, current_season + 1, 1)
+                if first_episode:
+                    buttons.append([
+                        InlineKeyboardButton(
+                            text=f"▶️ Сезон {current_season + 1}, Серія 1",
+                            callback_data=f"ae:{series_id}:{current_season + 1}:1"
+                        )
+                    ])
+
+        # Якщо є кнопка наступної серії - редагуємо повідомлення
+        if buttons:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+            await bot.edit_message_caption(
+                chat_id=callback.from_user.id,
+                message_id=sent_message.message_id,
+                caption=caption,
+                reply_markup=keyboard
+            )
+
     except Exception as e:
         import logging
         logging.error(f"Не вдалося відправити серію аніме: {str(e)}")
