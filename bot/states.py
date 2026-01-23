@@ -81,3 +81,31 @@ class BroadcastStates(StatesGroup):
     choosing_content = State()  # Вибір фільмів/серіалів для прикріплення
     waiting_for_schedule_time = State()  # Чекаємо час для планування (опціонально)
     confirming_broadcast = State()  # Підтвердження перед відправкою
+
+
+# ===============================================
+# Аніме стани
+# ===============================================
+
+class AddAnimeMovieStates(StatesGroup):
+    """Стани для додавання аніме-фільму"""
+    waiting_for_title = State()  # Чекаємо українську назву
+    choosing_series = State()  # Вибір серії аніме-фільмів
+    waiting_for_title_en = State()  # Чекаємо англійську назву
+    waiting_for_year = State()  # Чекаємо рік
+    waiting_for_imdb = State()  # Чекаємо IMDB рейтинг
+    waiting_for_poster = State()  # Чекаємо постер
+    waiting_for_video = State()  # Чекаємо відео
+
+
+class AddAnimeBatchStates(StatesGroup):
+    """Стани для пакетного додавання аніме-серіалу"""
+    choosing_existing_series = State()  # Вибір існуючого аніме-серіалу
+    # Створення нового аніме-серіалу
+    waiting_for_new_series_title = State()  # Чекаємо українську назву
+    waiting_for_new_series_title_en = State()  # Чекаємо англійську назву
+    waiting_for_new_series_year = State()  # Чекаємо рік
+    waiting_for_new_series_imdb = State()  # Чекаємо IMDB рейтинг
+    waiting_for_new_series_poster = State()  # Чекаємо постер
+    # Додавання епізодів (автоматично визначаємо сезон і епізод з caption)
+    waiting_for_videos = State()  # Чекаємо переслані відео з каналу

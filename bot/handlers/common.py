@@ -23,7 +23,12 @@ from bot.database.movies import (
     get_top_content_by_views,
     search_content,
     increment_views,
-    get_series_seasons
+    get_series_seasons,
+    # Аніме
+    get_anime_movies_only_count,
+    get_anime_series_only_count,
+    get_total_anime_count,
+    get_anime_episodes_count
 )
 from bot.config import config
 from bot.states import SearchStates, HelpStates
@@ -219,6 +224,168 @@ async def send_series_from_deeplink(message: Message, bot: Bot, series_id: str, 
     await message.answer("Приємного перегляду! 🍿", reply_markup=get_main_keyboard(is_admin))
 
 
+async def send_anime_movie_from_deeplink(message: Message, bot: Bot, movie_id: str, is_admin: bool):
+    """Відправити аніме-фільм користувачу через deep link"""
+    from bot.handlers.catalog import create_content_poster_buttons
+
+    movie = await get_movie_by_id(movie_id)
+
+    if not movie:
+        await message.answer(
+            "❌ На жаль, аніме не знайдено.\n\n"
+            "Можливо, воно було видалено або посилання некоректне.\n"
+            "Скористайся /catalog для перегляду доступного аніме.",
+            reply_markup=get_main_keyboard(is_admin)
+        )
+        return
+
+    await increment_views(movie_id, message.from_user.id)
+    await add_to_watch_history(message.from_user.id, movie_id, movie)
+
+    rating = movie.get('rating', 0)
+    views = movie.get('views_count', 0)
+
+    poster_caption = (
+        f"🎌 <b>{movie['title']}</b>\n\n"
+        f"📅 Рік: {movie['year']}\n"
+        f"⭐️ IMDB: {movie['imdb_rating']}\n"
+        f"⭐️ Рейтинг: {rating}\n"
+        f"👁 Перегляди: {views}"
+    )
+
+    poster_buttons = await create_content_poster_buttons(movie_id, message.from_user.id)
+
+    try:
+        await bot.send_photo(
+            chat_id=message.from_user.id,
+            photo=movie['poster_file_id'],
+            caption=poster_caption,
+            reply_markup=poster_buttons
+        )
+    except Exception:
+        pass
+
+    caption = (
+        f"🎌 <b>{movie['title']}</b>\n\n"
+        f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики | Мультфільми Українською</a>"
+    )
+
+    watched = await is_movie_watched(message.from_user.id, movie_id)
+    watched_text = "✅ Переглянуто" if watched else "Відмітити 👁"
+    video_buttons = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=watched_text, callback_data=f"watched:{movie_id}")]
+    ])
+
+    try:
+        video_file_id = movie.get("video_file_id")
+        video_type = movie.get("video_type", "video")
+
+        if video_type == "video":
+            await bot.send_video(
+                chat_id=message.from_user.id,
+                video=video_file_id,
+                caption=caption,
+                reply_markup=video_buttons
+            )
+        else:
+            await bot.send_document(
+                chat_id=message.from_user.id,
+                document=video_file_id,
+                caption=caption,
+                reply_markup=video_buttons
+            )
+
+        await message.answer("Приємного перегляду! 🍿", reply_markup=get_main_keyboard(is_admin))
+
+    except Exception as e:
+        import logging
+        logging.error(f"Deep link: Не вдалося відправити аніме '{movie.get('title')}': {str(e)}")
+        await message.answer(
+            "❌ На жаль, не вдалося відправити відео.\n"
+            "Спробуй знайти аніме через /catalog",
+            reply_markup=get_main_keyboard(is_admin)
+        )
+
+
+async def send_anime_series_from_deeplink(message: Message, bot: Bot, series_id: str, is_admin: bool):
+    """Відправити аніме-серіал користувачу через deep link - показує сезони"""
+    from bot.handlers.catalog import create_content_poster_buttons
+
+    series_info = await get_movie_by_id(series_id)
+
+    if not series_info:
+        await message.answer(
+            "❌ На жаль, аніме-серіал не знайдено.\n\n"
+            "Можливо, він був видалений або посилання некоректне.\n"
+            "Скористайся /catalog для перегляду доступного аніме.",
+            reply_markup=get_main_keyboard(is_admin)
+        )
+        return
+
+    title = series_info["title"]
+    seasons = await get_series_seasons(series_id)
+
+    if not seasons:
+        await message.answer(
+            f"❌ Не знайдено сезонів для аніме '{title}'.\n"
+            "Скористайся /catalog для перегляду іншого аніме.",
+            reply_markup=get_main_keyboard(is_admin)
+        )
+        return
+
+    rating = series_info.get('rating', 0)
+    views = series_info.get('views_count', 0)
+
+    poster_caption = (
+        f"🎌 <b>{series_info['title']}</b>\n\n"
+        f"📅 Рік: {series_info['year']}\n"
+        f"⭐️ IMDB: {series_info['imdb_rating']}\n"
+        f"⭐️ Рейтинг: {rating}\n"
+        f"👁 Перегляди: {views}"
+    )
+
+    poster_buttons = await create_content_poster_buttons(series_id, message.from_user.id)
+
+    try:
+        await bot.send_photo(
+            chat_id=message.from_user.id,
+            photo=series_info.get('poster_file_id'),
+            caption=poster_caption,
+            reply_markup=poster_buttons
+        )
+    except Exception:
+        pass
+
+    buttons = []
+    for season in seasons[:5]:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📺 Сезон {season}",
+                callback_data=f"asn:{series_id}:{season}:0"
+            )
+        ])
+
+    if len(seasons) > 5:
+        buttons.append([
+            InlineKeyboardButton(text="Далі ▶️", callback_data=f"as:{series_id}:1")
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="🎌 Каталог аніме", callback_data="catalog:anime")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
+        f"🎌 <b>{title}</b>\n\n"
+        f"Всього сезонів: {len(seasons)}\n"
+        f"Вибери сезон для перегляду 👇",
+        reply_markup=keyboard
+    )
+
+    await message.answer("Приємного перегляду! 🍿", reply_markup=get_main_keyboard(is_admin))
+
+
 def get_main_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
     """Створити головну клавіатуру для користувача"""
 
@@ -269,10 +436,23 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot, command: Comm
             await send_series_from_deeplink(message, bot, series_id, is_admin)
             return
 
+        # Обробка deep link для аніме-фільму: am_<id>
+        elif deep_link.startswith("am_"):
+            movie_id = deep_link[3:]  # Видаляємо "am_"
+            await send_anime_movie_from_deeplink(message, bot, movie_id, is_admin)
+            return
+
+        # Обробка deep link для аніме-серіалу: as_<id>
+        elif deep_link.startswith("as_"):
+            series_id = deep_link[3:]  # Видаляємо "as_"
+            await send_anime_series_from_deeplink(message, bot, series_id, is_admin)
+            return
+
     # Звичайний /start без параметрів
     # Отримуємо кількість мультфільмів та серіалів
     movies_count = await get_movies_only_count()
     series_count = await get_series_only_count()
+    anime_count = await get_total_anime_count()
 
     # Перевіряємо чи це новий користувач
     is_new_user = user.get("registered_at") == user.get("last_activity")
@@ -281,10 +461,11 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot, command: Comm
         welcome_text = (
             f"👋 Привіт, <b>{message.from_user.first_name}</b>!\n\n"
             f"Ласкаво просимо до бота з мультиками! 🎬\n\n"
-            f"Тут ти зможеш переглядати улюблені мультфільми та серіали.\n\n"
+            f"Тут ти зможеш переглядати улюблені мультфільми, серіали та аніме.\n\n"
             f"📊 Наша галерея з кожним днем збільшується і складає:\n"
             f"   🎬 Мультфільмів: <b>{movies_count}</b>\n"
-            f"   📺 Мультсеріалів: <b>{series_count}</b>\n\n"
+            f"   📺 Мультсеріалів: <b>{series_count}</b>\n"
+            f"   🎌 Аніме: <b>{anime_count}</b>\n\n"
             f"Використовуй кнопки нижче або команди:\n"
             f"📺 /catalog - переглянути каталог\n"
             f"🔍 /search - пошук мультфільмів\n"
@@ -296,7 +477,8 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot, command: Comm
             f"Радий бачити тебе знову! 🎬\n\n"
             f"📊 Наша галерея з кожним днем збільшується і складає:\n"
             f"   🎬 Мультфільмів: <b>{movies_count}</b>\n"
-            f"   📺 Мультсеріалів: <b>{series_count}</b>\n\n"
+            f"   📺 Мультсеріалів: <b>{series_count}</b>\n"
+            f"   🎌 Аніме: <b>{anime_count}</b>\n\n"
             f"Використовуй кнопки нижче для навігації! 👇"
         )
 
@@ -328,6 +510,8 @@ async def cmd_menu(message: Message, state: FSMContext, bot: Bot):
             "/watchlater - Пізніше\n\n"
             "⚙️ <b>Адмін:</b>\n"
             "/addMovie - Додати мультфільм\n"
+            "/addAnimeMovie - Додати аніме-фільм\n"
+            "/addAnimeBatch - Додати аніме-серіал\n"
             "/editContent - Редагувати\n"
             "/deleteContent - Видалити\n"
             "/broadcast - Розсилка\n"
@@ -365,6 +549,9 @@ async def cmd_stats(message: Message):
     active_users_count = await get_active_users_count(days=7)
     movies_only_count = await get_movies_only_count()
     series_only_count = await get_series_only_count()
+    anime_movies_count = await get_anime_movies_only_count()
+    anime_series_count = await get_anime_series_only_count()
+    anime_episodes_count = await get_anime_episodes_count()
     total_videos_count = await get_total_videos_count()
     total_views_count = await get_total_views_count()
     total_storage_gb = await get_total_storage_size()
@@ -376,8 +563,18 @@ async def cmd_stats(message: Message):
         for idx, content in enumerate(top_content, 1):
             title = content.get("title", "Без назви")
             views = content.get("views_count", 0)
-            content_type = "🎬" if content.get("content_type") == "movie" else "📺"
-            top_text += f"   {idx}. {content_type} {title} - {views} переглядів\n"
+            ct = content.get("content_type", "movie")
+            if ct == "movie":
+                emoji = "🎬"
+            elif ct == "series":
+                emoji = "📺"
+            elif ct == "anime_movie":
+                emoji = "🎌"
+            elif ct == "anime_series":
+                emoji = "🎌📺"
+            else:
+                emoji = "🎬"
+            top_text += f"   {idx}. {emoji} {title} - {views} переглядів\n"
     else:
         top_text = "   Немає даних\n"
 
@@ -386,11 +583,15 @@ async def cmd_stats(message: Message):
         "👥 <b>Користувачі:</b>\n"
         f"   • Всього: {users_count}\n"
         f"   • Активних (7 днів): {active_users_count}\n\n"
-        "🎬 <b>Контент:</b>\n"
+        "🎬 <b>Мультики:</b>\n"
         f"   • Мультфільмів: {movies_only_count}\n"
-        f"   • Мультсеріалів: {series_only_count}\n"
-        f"   • Всього відео: {total_videos_count}\n\n"
-        "📊 <b>Перегляди:</b>\n"
+        f"   • Мультсеріалів: {series_only_count}\n\n"
+        "🎌 <b>Аніме:</b>\n"
+        f"   • Аніме-фільмів: {anime_movies_count}\n"
+        f"   • Аніме-серіалів: {anime_series_count}\n"
+        f"   • Аніме-епізодів: {anime_episodes_count}\n\n"
+        f"📊 <b>Всього відео:</b> {total_videos_count}\n\n"
+        "👁 <b>Перегляди:</b>\n"
         f"   • Всього переглядів: {total_views_count}\n\n"
         "🏆 <b>Топ-5 по переглядах:</b>\n"
         f"{top_text}\n"
@@ -1104,10 +1305,14 @@ async def btn_admin(message: Message):
 
     await message.answer(
         "⚙️ <b>Адмін-панель</b>\n\n"
-        "<b>Управління контентом:</b>\n"
+        "<b>Мультфільми:</b>\n"
         "/addMovie - Додати мультфільм\n"
         "/addBatchMovie - Додати серіал (базовий)\n"
-        "/addSuperBatchMovie - Додати серіал (авто-режим)\n"
+        "/addSuperBatchMovie - Додати серіал (авто-режим)\n\n"
+        "<b>Аніме:</b>\n"
+        "/addAnimeMovie - Додати аніме-фільм\n"
+        "/addAnimeBatch - Додати аніме-серіал\n\n"
+        "<b>Редагування:</b>\n"
         "/editContent - Редагувати контент\n"
         "/deleteContent - Видалити контент\n\n"
         "<b>Розсилка:</b>\n"

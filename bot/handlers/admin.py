@@ -7,7 +7,11 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.states import AddMovieStates, AddBatchMovieStates, DeleteContentStates, EditContentStates, AddSuperBatchMovieStates
+from bot.states import (
+    AddMovieStates, AddBatchMovieStates, DeleteContentStates,
+    EditContentStates, AddSuperBatchMovieStates,
+    AddAnimeMovieStates, AddAnimeBatchStates
+)
 from bot.database.movies import (
     add_episode_to_series,
     get_all_series_list,
@@ -26,7 +30,14 @@ from bot.database.movies import (
     update_episode_video,
     toggle_content_visibility,
     search_movie_series_names,
-    get_all_movie_series_names
+    get_all_movie_series_names,
+    # Аніме функції
+    create_anime_movie,
+    create_anime_series,
+    get_all_anime_movies_list,
+    get_all_anime_series_list,
+    search_anime_movie_series_names,
+    get_all_anime_movie_series_names
 )
 from bot.database.users import update_last_series_added
 
@@ -2856,3 +2867,545 @@ async def handle_set_series(callback: CallbackQuery, state: FSMContext):
         )
     except (ValueError, IndexError) as e:
         await callback.answer("❌ Помилка при обробці серії", show_alert=True)
+
+
+# ===============================================
+# АНІМЕ КОМАНДИ
+# ===============================================
+
+@router.message(Command("addAnimeMovie"))
+async def cmd_add_anime_movie(message: Message, state: FSMContext):
+    """Початок процесу додавання аніме-фільму"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
+        return
+
+    await message.answer(
+        "🎌 <b>Додавання нового аніме-фільму</b>\n\n"
+        "Введіть українську назву аніме:"
+    )
+    await state.set_state(AddAnimeMovieStates.waiting_for_title)
+
+
+@router.message(AddAnimeMovieStates.waiting_for_title, ~F.text.startswith("/"))
+async def process_anime_movie_title(message: Message, state: FSMContext):
+    """Обробка української назви аніме-фільму"""
+    title = message.text.strip()
+    await state.update_data(title=title)
+
+    # Шукаємо схожі серії аніме-фільмів
+    similar_series = await search_anime_movie_series_names(title)
+
+    buttons = []
+    for series_name in similar_series[:10]:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📁 {series_name}",
+                callback_data=f"select_anime_series:{series_name}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="🔍 Вибрати з усіх серій", callback_data="select_anime_series:browse_all")
+    ])
+    buttons.append([
+        InlineKeyboardButton(text="➕ Створити нову серію", callback_data="select_anime_series:new")
+    ])
+    buttons.append([
+        InlineKeyboardButton(text="🎌 Окреме аніме (без серії)", callback_data="select_anime_series:standalone")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
+        f"🎌 <b>{title}</b>\n\n"
+        "Виберіть серію аніме-фільмів або створіть нову:",
+        reply_markup=keyboard
+    )
+    await state.set_state(AddAnimeMovieStates.choosing_series)
+
+
+@router.callback_query(F.data.startswith("select_anime_series:"), AddAnimeMovieStates.choosing_series)
+async def process_anime_series_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору серії аніме-фільмів"""
+    selection = callback.data.split(":", 1)[1]
+
+    if selection == "standalone":
+        await state.update_data(series_name=None)
+        await callback.message.edit_text(
+            "🎌 <b>Окреме аніме</b>\n\n"
+            "Введіть англійську назву аніме:"
+        )
+        await state.set_state(AddAnimeMovieStates.waiting_for_title_en)
+
+    elif selection == "new":
+        await callback.message.edit_text(
+            "➕ <b>Нова серія аніме</b>\n\n"
+            "Введіть назву серії (наприклад: 'Наруто - фільми'):"
+        )
+        await state.update_data(creating_new_series=True)
+        await state.set_state(AddAnimeMovieStates.choosing_series)
+
+    elif selection == "browse_all":
+        all_series = await get_all_anime_movie_series_names()
+        if not all_series:
+            await callback.answer("Немає існуючих серій аніме-фільмів", show_alert=True)
+            return
+
+        buttons = []
+        for series_name in all_series[:20]:
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"📁 {series_name}",
+                    callback_data=f"select_anime_series:{series_name}"
+                )
+            ])
+        buttons.append([
+            InlineKeyboardButton(text="⬅️ Назад", callback_data="select_anime_series:back")
+        ])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await callback.message.edit_text(
+            "📁 <b>Усі серії аніме-фільмів:</b>",
+            reply_markup=keyboard
+        )
+
+    elif selection == "back":
+        data = await state.get_data()
+        title = data.get("title", "")
+        similar_series = await search_anime_movie_series_names(title)
+
+        buttons = []
+        for series_name in similar_series[:10]:
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"📁 {series_name}",
+                    callback_data=f"select_anime_series:{series_name}"
+                )
+            ])
+        buttons.append([
+            InlineKeyboardButton(text="🔍 Вибрати з усіх серій", callback_data="select_anime_series:browse_all")
+        ])
+        buttons.append([
+            InlineKeyboardButton(text="➕ Створити нову серію", callback_data="select_anime_series:new")
+        ])
+        buttons.append([
+            InlineKeyboardButton(text="🎌 Окреме аніме (без серії)", callback_data="select_anime_series:standalone")
+        ])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await callback.message.edit_text(
+            f"🎌 <b>{title}</b>\n\n"
+            "Виберіть серію аніме-фільмів:",
+            reply_markup=keyboard
+        )
+
+    else:
+        # Вибрано існуючу серію
+        await state.update_data(series_name=selection)
+        await callback.message.edit_text(
+            f"📁 Серія: <b>{selection}</b>\n\n"
+            "Введіть англійську назву аніме:"
+        )
+        await state.set_state(AddAnimeMovieStates.waiting_for_title_en)
+
+    await callback.answer()
+
+
+@router.message(AddAnimeMovieStates.choosing_series, ~F.text.startswith("/"))
+async def process_new_anime_series_name(message: Message, state: FSMContext):
+    """Обробка назви нової серії аніме"""
+    data = await state.get_data()
+    if data.get("creating_new_series"):
+        series_name = message.text.strip()
+        await state.update_data(series_name=series_name, creating_new_series=False)
+        await message.answer(
+            f"📁 Серія: <b>{series_name}</b>\n\n"
+            "Введіть англійську назву аніме:"
+        )
+        await state.set_state(AddAnimeMovieStates.waiting_for_title_en)
+
+
+@router.message(AddAnimeMovieStates.waiting_for_title_en, ~F.text.startswith("/"))
+async def process_anime_title_en(message: Message, state: FSMContext):
+    """Обробка англійської назви аніме"""
+    title_en = message.text.strip()
+    await state.update_data(title_en=title_en)
+    await message.answer("📅 Введіть рік випуску аніме:")
+    await state.set_state(AddAnimeMovieStates.waiting_for_year)
+
+
+@router.message(AddAnimeMovieStates.waiting_for_year, ~F.text.startswith("/"))
+async def process_anime_year(message: Message, state: FSMContext):
+    """Обробка року аніме"""
+    try:
+        year = int(message.text.strip())
+        if year < 1900 or year > 2100:
+            await message.answer("❌ Введіть коректний рік (1900-2100):")
+            return
+        await state.update_data(year=year)
+        await message.answer("⭐️ Введіть IMDB рейтинг (наприклад: 7.5):")
+        await state.set_state(AddAnimeMovieStates.waiting_for_imdb)
+    except ValueError:
+        await message.answer("❌ Введіть рік числом:")
+
+
+@router.message(AddAnimeMovieStates.waiting_for_imdb, ~F.text.startswith("/"))
+async def process_anime_imdb(message: Message, state: FSMContext):
+    """Обробка IMDB рейтингу аніме"""
+    try:
+        imdb = float(message.text.strip().replace(",", "."))
+        if imdb < 0 or imdb > 10:
+            await message.answer("❌ Рейтинг має бути від 0 до 10:")
+            return
+        await state.update_data(imdb=imdb)
+        await message.answer(
+            "🖼 Перешліть постер аніме з каналу зберігання.\n\n"
+            "<i>Постер має бути переслано з каналу, а не завантажено напряму.</i>"
+        )
+        await state.set_state(AddAnimeMovieStates.waiting_for_poster)
+    except ValueError:
+        await message.answer("❌ Введіть рейтинг числом (наприклад: 7.5):")
+
+
+@router.message(AddAnimeMovieStates.waiting_for_poster, F.photo)
+async def process_anime_poster(message: Message, state: FSMContext):
+    """Обробка постера аніме"""
+    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+        await message.answer(
+            "❌ Постер має бути переслано з каналу зберігання!\n"
+            "Перешліть фото з правильного каналу."
+        )
+        return
+
+    poster_file_id = message.photo[-1].file_id
+    await state.update_data(poster_file_id=poster_file_id)
+
+    await message.answer(
+        "🎬 Перешліть відео аніме з каналу зберігання.\n\n"
+        "<i>Відео має бути переслано з каналу, а не завантажено напряму.</i>"
+    )
+    await state.set_state(AddAnimeMovieStates.waiting_for_video)
+
+
+@router.message(AddAnimeMovieStates.waiting_for_video, F.video | F.document)
+async def process_anime_video(message: Message, state: FSMContext):
+    """Обробка відео аніме та збереження в БД"""
+    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+        await message.answer(
+            "❌ Відео має бути переслано з каналу зберігання!\n"
+            "Перешліть відео з правильного каналу."
+        )
+        return
+
+    # Отримуємо дані відео
+    if message.video:
+        video_file_id = message.video.file_id
+        video_type = "video"
+        file_size = message.video.file_size or 0
+        duration = message.video.duration or 0
+    else:
+        video_file_id = message.document.file_id
+        video_type = "document"
+        file_size = message.document.file_size or 0
+        duration = 0
+
+    # Отримуємо всі дані зі стану
+    data = await state.get_data()
+
+    # Зберігаємо аніме-фільм
+    anime = await create_anime_movie(
+        title=data["title"],
+        title_en=data["title_en"],
+        year=data["year"],
+        imdb_rating=data["imdb"],
+        poster_file_id=data["poster_file_id"],
+        video_file_id=video_file_id,
+        video_type=video_type,
+        added_by=message.from_user.id,
+        file_size=file_size,
+        duration=duration,
+        series_name=data.get("series_name")
+    )
+
+    await state.clear()
+
+    series_info = f"\n📁 Серія: {data.get('series_name')}" if data.get('series_name') else ""
+
+    await message.answer(
+        f"✅ <b>Аніме-фільм успішно додано!</b>\n\n"
+        f"🎌 {data['title']}\n"
+        f"🔤 {data['title_en']}\n"
+        f"📅 Рік: {data['year']}\n"
+        f"⭐️ IMDB: {data['imdb']}{series_info}\n\n"
+        f"ID: <code>{anime['_id']}</code>"
+    )
+
+
+# ===============================================
+# АНІМЕ-СЕРІАЛИ
+# ===============================================
+
+@router.message(Command("addAnimeBatch"))
+async def cmd_add_anime_batch(message: Message, state: FSMContext):
+    """Початок процесу додавання аніме-серіалу"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
+        return
+
+    # Отримуємо список існуючих аніме-серіалів
+    series_list = await get_all_anime_series_list(include_hidden=True)
+
+    buttons = []
+    for series in series_list[:20]:
+        series_id = str(series["_id"])
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🎌 {series['title']}",
+                callback_data=f"anime_batch_select:{series_id}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="➕ Створити новий аніме-серіал", callback_data="anime_batch_select:new")
+    ])
+    buttons.append([
+        InlineKeyboardButton(text="❌ Скасувати", callback_data="anime_batch_select:cancel")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
+        "🎌 <b>Додавання серій аніме-серіалу</b>\n\n"
+        "Виберіть існуючий аніме-серіал або створіть новий:",
+        reply_markup=keyboard
+    )
+    await state.set_state(AddAnimeBatchStates.choosing_existing_series)
+
+
+@router.callback_query(F.data.startswith("anime_batch_select:"), AddAnimeBatchStates.choosing_existing_series)
+async def process_anime_batch_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробка вибору аніме-серіалу"""
+    selection = callback.data.split(":", 1)[1]
+
+    if selection == "cancel":
+        await state.clear()
+        await callback.message.edit_text("❌ Додавання скасовано.")
+        await callback.answer()
+        return
+
+    if selection == "new":
+        await callback.message.edit_text(
+            "🎌 <b>Створення нового аніме-серіалу</b>\n\n"
+            "Введіть українську назву аніме-серіалу:"
+        )
+        await state.set_state(AddAnimeBatchStates.waiting_for_new_series_title)
+    else:
+        # Вибрано існуючий серіал
+        series = await get_movie_by_id(selection)
+        if not series:
+            await callback.answer("❌ Серіал не знайдено", show_alert=True)
+            return
+
+        await state.update_data(series_id=selection, series_title=series["title"])
+        await callback.message.edit_text(
+            f"🎌 <b>{series['title']}</b>\n\n"
+            "Тепер пересилайте відео з каналу зберігання.\n\n"
+            "Формат caption:\n"
+            "<code>id:{series_id} season:X episode:Y</code>\n\n"
+            f"<code>id:{selection} season:1 episode:1</code>\n\n"
+            "Коли закінчите, напишіть <b>готово</b> або /done"
+        )
+        await state.update_data(received_videos={})
+        await state.set_state(AddAnimeBatchStates.waiting_for_videos)
+
+    await callback.answer()
+
+
+@router.message(AddAnimeBatchStates.waiting_for_new_series_title, ~F.text.startswith("/"))
+async def process_anime_batch_title(message: Message, state: FSMContext):
+    """Обробка назви нового аніме-серіалу"""
+    title = message.text.strip()
+    await state.update_data(new_series_title=title)
+    await message.answer("🔤 Введіть англійську назву аніме-серіалу:")
+    await state.set_state(AddAnimeBatchStates.waiting_for_new_series_title_en)
+
+
+@router.message(AddAnimeBatchStates.waiting_for_new_series_title_en, ~F.text.startswith("/"))
+async def process_anime_batch_title_en(message: Message, state: FSMContext):
+    """Обробка англійської назви"""
+    title_en = message.text.strip()
+    await state.update_data(new_series_title_en=title_en)
+    await message.answer("📅 Введіть рік випуску:")
+    await state.set_state(AddAnimeBatchStates.waiting_for_new_series_year)
+
+
+@router.message(AddAnimeBatchStates.waiting_for_new_series_year, ~F.text.startswith("/"))
+async def process_anime_batch_year(message: Message, state: FSMContext):
+    """Обробка року"""
+    try:
+        year = int(message.text.strip())
+        if year < 1900 or year > 2100:
+            await message.answer("❌ Введіть коректний рік (1900-2100):")
+            return
+        await state.update_data(new_series_year=year)
+        await message.answer("⭐️ Введіть IMDB рейтинг (наприклад: 8.5):")
+        await state.set_state(AddAnimeBatchStates.waiting_for_new_series_imdb)
+    except ValueError:
+        await message.answer("❌ Введіть рік числом:")
+
+
+@router.message(AddAnimeBatchStates.waiting_for_new_series_imdb, ~F.text.startswith("/"))
+async def process_anime_batch_imdb(message: Message, state: FSMContext):
+    """Обробка IMDB рейтингу"""
+    try:
+        imdb = float(message.text.strip().replace(",", "."))
+        if imdb < 0 or imdb > 10:
+            await message.answer("❌ Рейтинг має бути від 0 до 10:")
+            return
+        await state.update_data(new_series_imdb=imdb)
+        await message.answer(
+            "🖼 Перешліть постер аніме-серіалу з каналу зберігання."
+        )
+        await state.set_state(AddAnimeBatchStates.waiting_for_new_series_poster)
+    except ValueError:
+        await message.answer("❌ Введіть рейтинг числом:")
+
+
+@router.message(AddAnimeBatchStates.waiting_for_new_series_poster, F.photo)
+async def process_anime_batch_poster(message: Message, state: FSMContext):
+    """Обробка постера та створення аніме-серіалу"""
+    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+        await message.answer("❌ Постер має бути переслано з каналу зберігання!")
+        return
+
+    poster_file_id = message.photo[-1].file_id
+    data = await state.get_data()
+
+    # Створюємо аніме-серіал
+    series = await create_anime_series(
+        title=data["new_series_title"],
+        title_en=data["new_series_title_en"],
+        year=data["new_series_year"],
+        imdb_rating=data["new_series_imdb"],
+        poster_file_id=poster_file_id,
+        added_by=message.from_user.id
+    )
+
+    series_id = str(series["_id"])
+    await state.update_data(
+        series_id=series_id,
+        series_title=data["new_series_title"],
+        received_videos={}
+    )
+
+    await message.answer(
+        f"✅ <b>Аніме-серіал створено!</b>\n\n"
+        f"🎌 {data['new_series_title']}\n\n"
+        "Тепер пересилайте відео з каналу зберігання.\n\n"
+        "Формат caption:\n"
+        f"<code>id:{series_id} season:1 episode:1</code>\n\n"
+        "Коли закінчите, напишіть <b>готово</b> або /done"
+    )
+    await state.set_state(AddAnimeBatchStates.waiting_for_videos)
+
+
+@router.message(AddAnimeBatchStates.waiting_for_videos, F.video | F.document)
+async def process_anime_batch_video(message: Message, state: FSMContext):
+    """Обробка відео для аніме-серіалу"""
+    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+        await message.answer("❌ Відео має бути переслано з каналу зберігання!")
+        return
+
+    # Парсимо caption
+    caption = message.caption or ""
+    pattern = r'id:([a-f0-9]+)\s+season:(\d+)\s+episode:(\d+)'
+    match = re.search(pattern, caption, re.IGNORECASE)
+
+    if not match:
+        await message.answer(
+            "❌ Невірний формат caption!\n\n"
+            "Потрібно: <code>id:XXX season:X episode:X</code>"
+        )
+        return
+
+    parsed_id = match.group(1)
+    season = int(match.group(2))
+    episode = int(match.group(3))
+
+    data = await state.get_data()
+    series_id = data.get("series_id")
+
+    if not series_id or not series_id.endswith(parsed_id):
+        await message.answer(f"❌ ID в caption не співпадає з обраним серіалом!")
+        return
+
+    # Отримуємо дані відео
+    if message.video:
+        video_file_id = message.video.file_id
+        video_type = "video"
+        file_size = message.video.file_size or 0
+        duration = message.video.duration or 0
+    else:
+        video_file_id = message.document.file_id
+        video_type = "document"
+        file_size = message.document.file_size or 0
+        duration = 0
+
+    # Додаємо епізод
+    success = await add_episode_to_series(
+        series_id=series_id,
+        season=season,
+        episode=episode,
+        video_file_id=video_file_id,
+        video_type=video_type,
+        file_size=file_size,
+        duration=duration
+    )
+
+    if success:
+        received = data.get("received_videos", {})
+        key = f"{season}:{episode}"
+        received[key] = video_file_id
+        await state.update_data(received_videos=received)
+
+        count = len(received)
+        if count % 5 == 0:
+            await message.answer(f"✅ Додано {count} серій...")
+        else:
+            await message.answer(f"✅ S{season}E{episode} додано")
+    else:
+        await message.answer(f"❌ Помилка додавання S{season}E{episode}")
+
+
+@router.message(AddAnimeBatchStates.waiting_for_videos)
+async def process_anime_batch_done(message: Message, state: FSMContext):
+    """Завершення додавання серій"""
+    text = message.text.strip().lower() if message.text else ""
+
+    if text in ["готово", "done", "/done"]:
+        data = await state.get_data()
+        received = data.get("received_videos", {})
+        series_title = data.get("series_title", "")
+
+        await state.clear()
+
+        if received:
+            # Групуємо по сезонах
+            seasons = {}
+            for key in received:
+                s, e = key.split(":")
+                if s not in seasons:
+                    seasons[s] = 0
+                seasons[s] += 1
+
+            season_info = "\n".join([f"  Сезон {s}: {c} серій" for s, c in sorted(seasons.items())])
+
+            await message.answer(
+                f"✅ <b>Додавання завершено!</b>\n\n"
+                f"🎌 {series_title}\n"
+                f"Додано серій: {len(received)}\n\n"
+                f"{season_info}"
+            )
+        else:
+            await message.answer("❌ Жодної серії не було додано.")

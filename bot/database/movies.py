@@ -154,8 +154,8 @@ async def get_series_only_count() -> int:
 
 
 async def get_total_episodes_count() -> int:
-    """Отримати загальну кількість епізодів у всіх серіалах"""
-    series_list = await db.videos.find({"content_type": "series"}).to_list(length=None)
+    """Отримати загальну кількість епізодів у всіх серіалах (включаючи аніме)"""
+    series_list = await db.videos.find({"content_type": {"$in": ["series", "anime_series"]}}).to_list(length=None)
 
     total_episodes = 0
     for series in series_list:
@@ -167,10 +167,11 @@ async def get_total_episodes_count() -> int:
 
 
 async def get_total_videos_count() -> int:
-    """Отримати загальну кількість відео (фільми + епізоди)"""
+    """Отримати загальну кількість відео (фільми + аніме-фільми + епізоди)"""
     movies_count = await get_movies_only_count()
+    anime_movies_count = await db.videos.count_documents({"content_type": "anime_movie"})
     episodes_count = await get_total_episodes_count()
-    return movies_count + episodes_count
+    return movies_count + anime_movies_count + episodes_count
 
 
 async def get_total_views_count() -> int:
@@ -210,12 +211,12 @@ async def get_total_storage_size() -> float:
     """
     BASE_SIZE_GB = 53.2
 
-    # Отримуємо всі фільми
-    movies = await db.videos.find({"content_type": "movie"}).to_list(length=None)
+    # Отримуємо всі фільми (мультфільми + аніме-фільми)
+    movies = await db.videos.find({"content_type": {"$in": ["movie", "anime_movie"]}}).to_list(length=None)
     movies_size = sum(movie.get("file_size", 0) for movie in movies)
 
-    # Отримуємо всі серіали
-    series_list = await db.videos.find({"content_type": "series"}).to_list(length=None)
+    # Отримуємо всі серіали (мультсеріали + аніме-серіали)
+    series_list = await db.videos.find({"content_type": {"$in": ["series", "anime_series"]}}).to_list(length=None)
 
     # Рахуємо розмір всіх епізодів
     episodes_size = 0
@@ -763,3 +764,211 @@ async def get_grouped_movies(include_hidden: bool = False) -> dict:
         "grouped": grouped,
         "standalone": standalone
     }
+
+
+# ===============================================
+# Аніме функції
+# ===============================================
+
+async def create_anime_movie(
+    title: str,
+    title_en: str,
+    year: int,
+    imdb_rating: float,
+    poster_file_id: str,
+    video_file_id: str,
+    video_type: str,
+    added_by: int,
+    file_size: int = 0,
+    duration: int = 0,
+    series_name: str = None
+) -> dict:
+    """
+    Створити новий аніме-фільм
+    """
+    movie_data = {
+        "title": title,
+        "title_en": title_en,
+        "year": year,
+        "imdb_rating": imdb_rating,
+        "poster_file_id": poster_file_id,
+        "content_type": "anime_movie",
+        "video_file_id": video_file_id,
+        "video_type": video_type,
+        "file_size": file_size,
+        "duration": duration,
+        "added_by": added_by,
+        "added_at": datetime.now(timezone.utc),
+        "views_count": 0,
+        "rating": 0,
+        "ratings": [],
+    }
+
+    # Додаємо series_name якщо вказано
+    if series_name:
+        movie_data["series_name"] = series_name
+
+    result = await db.videos.insert_one(movie_data)
+    movie_data["_id"] = result.inserted_id
+    return movie_data
+
+
+async def create_anime_series(
+    title: str,
+    title_en: str,
+    year: int,
+    imdb_rating: float,
+    poster_file_id: str,
+    added_by: int,
+) -> dict:
+    """
+    Створити новий аніме-серіал (без серій)
+    """
+    series_data = {
+        "title": title,
+        "title_en": title_en,
+        "year": year,
+        "imdb_rating": imdb_rating,
+        "poster_file_id": poster_file_id,
+        "content_type": "anime_series",
+        "added_by": added_by,
+        "added_at": datetime.now(timezone.utc),
+        "views_count": 0,
+        "rating": 0,
+        "ratings": [],
+        "seasons": {}
+    }
+
+    result = await db.videos.insert_one(series_data)
+    series_data["_id"] = result.inserted_id
+    return series_data
+
+
+async def get_all_anime_movies_list(include_hidden: bool = False) -> list:
+    """Отримати список всіх аніме-фільмів"""
+    query = {"content_type": "anime_movie"}
+    if not include_hidden:
+        query["is_hidden"] = {"$ne": True}
+
+    cursor = db.videos.find(query).sort("title", 1)
+    return await cursor.to_list(length=None)
+
+
+async def get_all_anime_series_list(include_hidden: bool = False) -> list:
+    """Отримати список всіх аніме-серіалів"""
+    query = {"content_type": "anime_series"}
+    if not include_hidden:
+        query["is_hidden"] = {"$ne": True}
+
+    cursor = db.videos.find(query).sort("title", 1)
+    return await cursor.to_list(length=None)
+
+
+async def get_anime_movies_only_count() -> int:
+    """Отримати кількість тільки аніме-фільмів"""
+    return await db.videos.count_documents({"content_type": "anime_movie"})
+
+
+async def get_anime_series_only_count() -> int:
+    """Отримати кількість тільки аніме-серіалів"""
+    return await db.videos.count_documents({"content_type": "anime_series"})
+
+
+async def get_total_anime_count() -> int:
+    """Отримати загальну кількість аніме (фільми + серіали)"""
+    return await db.videos.count_documents({
+        "content_type": {"$in": ["anime_movie", "anime_series"]}
+    })
+
+
+async def get_anime_episodes_count() -> int:
+    """Отримати загальну кількість епізодів у всіх аніме-серіалах"""
+    series_list = await db.videos.find({"content_type": "anime_series"}).to_list(length=None)
+
+    total_episodes = 0
+    for series in series_list:
+        if "seasons" in series:
+            for season_num, episodes in series["seasons"].items():
+                total_episodes += len(episodes)
+
+    return total_episodes
+
+
+async def get_grouped_anime_movies(include_hidden: bool = False) -> dict:
+    """
+    Отримати аніме-фільми, згруповані за series_name
+    Returns: {
+        "grouped": {series_name: [movies]},
+        "standalone": [movies without series_name]
+    }
+    """
+    query = {"content_type": "anime_movie"}
+    if not include_hidden:
+        query["is_hidden"] = {"$ne": True}
+
+    all_movies = await db.videos.find(query).sort("title", 1).to_list(length=None)
+
+    grouped = {}
+    standalone = []
+
+    for movie in all_movies:
+        series_name = movie.get("series_name")
+        if series_name:
+            if series_name not in grouped:
+                grouped[series_name] = []
+            grouped[series_name].append(movie)
+        else:
+            standalone.append(movie)
+
+    # Сортуємо фільми в кожній групі за роком
+    for series_name in grouped:
+        grouped[series_name].sort(key=lambda m: m.get("year", 0))
+
+    return {
+        "grouped": grouped,
+        "standalone": standalone
+    }
+
+
+async def get_all_anime_movie_series_names() -> list:
+    """Отримати всі унікальні назви серій аніме-фільмів"""
+    pipeline = [
+        {"$match": {"content_type": "anime_movie", "series_name": {"$exists": True, "$ne": None}}},
+        {"$group": {"_id": "$series_name"}},
+        {"$sort": {"_id": 1}}
+    ]
+
+    result = await db.videos.aggregate(pipeline).to_list(length=None)
+    return [item["_id"] for item in result]
+
+
+async def search_anime_movie_series_names(query: str) -> list:
+    """Пошук схожих назв серій аніме-фільмів"""
+    pipeline = [
+        {
+            "$match": {
+                "content_type": "anime_movie",
+                "series_name": {
+                    "$exists": True,
+                    "$ne": None,
+                    "$regex": query,
+                    "$options": "i"
+                }
+            }
+        },
+        {"$group": {"_id": "$series_name"}},
+        {"$sort": {"_id": 1}}
+    ]
+
+    result = await db.videos.aggregate(pipeline).to_list(length=None)
+    return [item["_id"] for item in result]
+
+
+async def get_anime_movies_by_series_name(series_name: str, include_hidden: bool = False) -> list:
+    """Отримати всі аніме-фільми за назвою серії"""
+    query = {"content_type": "anime_movie", "series_name": series_name}
+    if not include_hidden:
+        query["is_hidden"] = {"$ne": True}
+
+    cursor = db.videos.find(query).sort("year", 1)
+    return await cursor.to_list(length=None)

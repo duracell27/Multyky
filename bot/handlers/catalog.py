@@ -19,7 +19,14 @@ from bot.database.movies import (
     get_user_vote,
     get_grouped_movies,
     get_movies_by_series_name,
-    calculate_series_average_rating
+    calculate_series_average_rating,
+    # Аніме функції
+    get_all_anime_movies_list,
+    get_all_anime_series_list,
+    get_grouped_anime_movies,
+    get_anime_movies_by_series_name,
+    get_anime_movies_only_count,
+    get_anime_series_only_count
 )
 from bot.database.users import (
     get_or_create_user,
@@ -79,11 +86,14 @@ async def cmd_catalog(message: Message, state: FSMContext, bot: Bot):
         [
             InlineKeyboardButton(text="🎬 Мультфільми", callback_data="catalog:movies"),
             InlineKeyboardButton(text="📺 Мультсеріали", callback_data="catalog:series")
+        ],
+        [
+            InlineKeyboardButton(text="🎌 Аніме", callback_data="catalog:anime")
         ]
     ])
 
     await message.answer(
-        "🎬 <b>Каталог мультфільмів</b>\n\n"
+        "🎬 <b>Каталог</b>\n\n"
         "Виберіть категорію:",
         reply_markup=keyboard
     )
@@ -1297,12 +1307,843 @@ async def back_to_catalog(callback: CallbackQuery):
         [
             InlineKeyboardButton(text="🎬 Мультфільми", callback_data="catalog:movies"),
             InlineKeyboardButton(text="📺 Мультсеріали", callback_data="catalog:series")
+        ],
+        [
+            InlineKeyboardButton(text="🎌 Аніме", callback_data="catalog:anime")
         ]
     ])
 
     await callback.message.edit_text(
-        "🎬 <b>Каталог мультфільмів</b>\n\n"
+        "🎬 <b>Каталог</b>\n\n"
         "Виберіть категорію:",
         reply_markup=keyboard
     )
     await callback.answer()
+
+
+# ===============================================
+# АНІМЕ ОБРОБНИКИ
+# ===============================================
+
+@router.callback_query(F.data == "catalog:anime")
+async def show_anime_categories(callback: CallbackQuery):
+    """Показати підкатегорії аніме"""
+
+    # Отримуємо кількість для відображення
+    anime_movies_count = await get_anime_movies_only_count()
+    anime_series_count = await get_anime_series_only_count()
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=f"🎬 Аніме-фільми ({anime_movies_count})",
+                callback_data="catalog:anime_movies"
+            ),
+            InlineKeyboardButton(
+                text=f"📺 Аніме-серіали ({anime_series_count})",
+                callback_data="catalog:anime_series"
+            )
+        ],
+        [
+            InlineKeyboardButton(text="◀️ Назад", callback_data="catalog:back")
+        ]
+    ])
+
+    await callback.message.edit_text(
+        "🎌 <b>Аніме</b>\n\n"
+        "Виберіть категорію:",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+# ===============================================
+# АНІМЕ-ФІЛЬМИ
+# ===============================================
+
+@router.callback_query(F.data.startswith("catalog:anime_movies:new:"))
+async def show_anime_movies_new(callback: CallbackQuery):
+    """Показати новинки аніме-фільмів (2025 року)"""
+
+    parts = callback.data.split(":")
+    page = int(parts[3]) if len(parts) > 3 else 0
+
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+    grouped_data = await get_grouped_anime_movies(include_hidden=is_admin)
+    grouped = grouped_data["grouped"]
+    standalone = grouped_data["standalone"]
+
+    # Збираємо всі фільми
+    all_movies = []
+    for series_name, movies in grouped.items():
+        all_movies.extend(movies)
+    all_movies.extend(standalone)
+
+    # Фільтруємо тільки фільми 2025 року
+    new_movies = [m for m in all_movies if m.get('year') == 2025]
+
+    if not new_movies:
+        await callback.answer("❌ Новинок аніме 2025 року поки немає", show_alert=True)
+        return
+
+    # Сортуємо за рейтингом
+    new_movies.sort(key=lambda x: x.get('imdb_rating', 0), reverse=True)
+
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(new_movies) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    movies_page = new_movies[start_idx:end_idx]
+
+    buttons = []
+    for movie in movies_page:
+        movie_id = str(movie["_id"])
+        is_watched = await is_movie_watched(callback.from_user.id, movie_id)
+        watched_emoji = "👁 " if is_watched else ""
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{watched_emoji}🎌 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
+                callback_data=f"am:{movie_id}"
+            )
+        ])
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"catalog:anime_movies:new:{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="Далі ▶️", callback_data=f"catalog:anime_movies:new:{page+1}"))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад до аніме-фільмів", callback_data="catalog:anime_movies")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await callback.message.edit_text(
+        f"🆕 <b>Новинки аніме 2025:</b>\n\n"
+        f"Всього: {len(new_movies)}{page_info}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("catalog:anime_movies:top:"))
+async def show_anime_movies_top(callback: CallbackQuery):
+    """Показати топ аніме-фільмів за рейтингом"""
+
+    parts = callback.data.split(":")
+    page = int(parts[3]) if len(parts) > 3 else 0
+
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+    grouped_data = await get_grouped_anime_movies(include_hidden=is_admin)
+    grouped = grouped_data["grouped"]
+    standalone = grouped_data["standalone"]
+
+    # Збираємо всі фільми
+    all_movies = []
+    for series_name, movies in grouped.items():
+        all_movies.extend(movies)
+    all_movies.extend(standalone)
+
+    if not all_movies:
+        await callback.answer("❌ Аніме-фільмів поки немає", show_alert=True)
+        return
+
+    # Сортуємо за рейтингом
+    all_movies.sort(key=lambda x: x.get('imdb_rating', 0), reverse=True)
+
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(all_movies) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    movies_page = all_movies[start_idx:end_idx]
+
+    buttons = []
+    for movie in movies_page:
+        movie_id = str(movie["_id"])
+        is_watched = await is_movie_watched(callback.from_user.id, movie_id)
+        watched_emoji = "👁 " if is_watched else ""
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{watched_emoji}🎌 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
+                callback_data=f"am:{movie_id}"
+            )
+        ])
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"catalog:anime_movies:top:{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="Далі ▶️", callback_data=f"catalog:anime_movies:top:{page+1}"))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад до аніме-фільмів", callback_data="catalog:anime_movies")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await callback.message.edit_text(
+        f"🏆 <b>Топ аніме-фільмів:</b>\n\n"
+        f"Всього: {len(all_movies)}{page_info}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("catalog:anime_movies"))
+async def show_anime_movies(callback: CallbackQuery):
+    """Показати список аніме-фільмів"""
+
+    parts = callback.data.split(":")
+    page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+    grouped_data = await get_grouped_anime_movies(include_hidden=is_admin)
+    grouped = grouped_data["grouped"]
+    standalone = grouped_data["standalone"]
+
+    # Формуємо список елементів (групи + окремі фільми)
+    all_items = []
+
+    for series_name in sorted(grouped.keys()):
+        movies = grouped[series_name]
+        count = len(movies)
+        avg_rating = await calculate_series_average_rating(movies)
+        all_items.append({
+            "type": "series",
+            "name": series_name,
+            "count": count,
+            "avg_rating": avg_rating
+        })
+
+    for movie in standalone:
+        all_items.append({
+            "type": "movie",
+            "movie": movie
+        })
+
+    # Рахуємо новинки
+    all_movies = []
+    for series_name, movies in grouped.items():
+        all_movies.extend(movies)
+    all_movies.extend(standalone)
+    new_movies_count = len([m for m in all_movies if m.get('year') == 2025])
+
+    if not all_items:
+        await callback.message.edit_text(
+            "🎌 <b>Аніме-фільми</b>\n\n"
+            "Поки що тут порожньо. Аніме-фільми скоро з'являться!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="catalog:anime")]
+            ])
+        )
+        await callback.answer()
+        return
+
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(all_items) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    items_page = all_items[start_idx:end_idx]
+
+    buttons = []
+
+    # Фільтри на першій сторінці
+    if page == 0:
+        filter_buttons = []
+        if new_movies_count > 0:
+            filter_buttons.append(
+                InlineKeyboardButton(text=f"🆕 Новинки ({new_movies_count})", callback_data="catalog:anime_movies:new:0")
+            )
+        filter_buttons.append(
+            InlineKeyboardButton(text="🏆 Топ", callback_data="catalog:anime_movies:top:0")
+        )
+        if filter_buttons:
+            buttons.append(filter_buttons)
+
+    for item in items_page:
+        if item["type"] == "series":
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"📁 {item['name']} ({item['count']} фільмів) ⭐️ {item['avg_rating']}",
+                    callback_data=f"anime_series_movies:{item['name']}"
+                )
+            ])
+        else:
+            movie = item["movie"]
+            movie_id = str(movie["_id"])
+            is_watched = await is_movie_watched(callback.from_user.id, movie_id)
+            watched_emoji = "👁 " if is_watched else ""
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"{watched_emoji}🎌 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
+                    callback_data=f"am:{movie_id}"
+                )
+            ])
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"catalog:anime_movies:{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="Далі ▶️", callback_data=f"catalog:anime_movies:{page+1}"))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад до аніме", callback_data="catalog:anime")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await callback.message.edit_text(
+        f"🎌 <b>Аніме-фільми</b>\n\n"
+        f"Всього: {len(all_movies)}{page_info}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anime_series_movies:"))
+async def show_anime_series_movies(callback: CallbackQuery):
+    """Показати фільми з серії аніме"""
+
+    series_name = callback.data.split(":", 1)[1]
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+
+    movies = await get_anime_movies_by_series_name(series_name, include_hidden=is_admin)
+
+    if not movies:
+        await callback.answer("❌ Фільми цієї серії не знайдено", show_alert=True)
+        return
+
+    buttons = []
+    for movie in movies:
+        movie_id = str(movie["_id"])
+        is_watched = await is_movie_watched(callback.from_user.id, movie_id)
+        watched_emoji = "👁 " if is_watched else ""
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{watched_emoji}🎌 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
+                callback_data=f"am:{movie_id}"
+            )
+        ])
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="catalog:anime_movies")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    avg_rating = await calculate_series_average_rating(movies)
+
+    await callback.message.edit_text(
+        f"📁 <b>{series_name}</b>\n\n"
+        f"Фільмів: {len(movies)}\n"
+        f"Середній рейтинг: ⭐️ {avg_rating}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("am:"))
+async def send_anime_movie(callback: CallbackQuery, bot: Bot):
+    """Відправити аніме-фільм користувачу"""
+
+    movie_id = callback.data.split(":")[1]
+    movie = await get_movie_by_id(movie_id)
+
+    if not movie:
+        await callback.answer("❌ Аніме-фільм не знайдено", show_alert=True)
+        return
+
+    await callback.answer("📤 Відправляю аніме...")
+
+    # Збільшуємо лічильник переглядів
+    await increment_views(movie_id, callback.from_user.id)
+
+    # Додаємо в історію перегляду
+    await add_to_watch_history(callback.from_user.id, movie_id, movie)
+
+    # Відправляємо постер
+    rating = movie.get('rating', 0)
+    views = movie.get('views_count', 0)
+
+    poster_caption = (
+        f"🎌 <b>{movie['title']}</b>\n\n"
+        f"📅 Рік: {movie['year']}\n"
+        f"⭐️ IMDB: {movie['imdb_rating']}\n"
+        f"⭐️ Рейтинг: {rating}\n"
+        f"👁 Перегляди: {views}"
+    )
+
+    poster_buttons = await create_content_poster_buttons(movie_id, callback.from_user.id)
+
+    try:
+        await bot.send_photo(
+            chat_id=callback.from_user.id,
+            photo=movie['poster_file_id'],
+            caption=poster_caption,
+            reply_markup=poster_buttons
+        )
+    except Exception:
+        pass
+
+    # Формуємо підпис для відео
+    caption = (
+        f"🎌 <b>{movie['title']}</b>\n\n"
+        f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики | Мультфільми Українською</a>"
+    )
+
+    # Кнопка переглянуто
+    watched = await is_movie_watched(callback.from_user.id, movie_id)
+    watched_text = "✅ Переглянуто" if watched else "Відмітити 👁"
+    video_buttons = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=watched_text, callback_data=f"watched:{movie_id}")]
+    ])
+
+    # Відправляємо відео
+    try:
+        video_file_id = movie.get("video_file_id")
+        video_type = movie.get("video_type", "video")
+
+        if video_type == "video":
+            await bot.send_video(
+                chat_id=callback.from_user.id,
+                video=video_file_id,
+                caption=caption,
+                reply_markup=video_buttons
+            )
+        else:
+            await bot.send_document(
+                chat_id=callback.from_user.id,
+                document=video_file_id,
+                caption=caption,
+                reply_markup=video_buttons
+            )
+    except Exception as e:
+        import logging
+        logging.error(f"Не вдалося відправити аніме '{movie.get('title')}': {str(e)}")
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=f"❌ На жаль, не вдалося відправити '{movie.get('title')}'.\nСпробуй пізніше."
+        )
+
+
+# ===============================================
+# АНІМЕ-СЕРІАЛИ
+# ===============================================
+
+@router.callback_query(F.data.startswith("catalog:anime_series:new:"))
+async def show_anime_series_new(callback: CallbackQuery):
+    """Показати новинки аніме-серіалів (2025 року)"""
+
+    parts = callback.data.split(":")
+    page = int(parts[3]) if len(parts) > 3 else 0
+
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+    series = await get_all_anime_series_list(include_hidden=is_admin)
+
+    new_series = [s for s in series if s.get('year') == 2025]
+
+    if not new_series:
+        await callback.answer("❌ Новинок аніме-серіалів 2025 року поки немає", show_alert=True)
+        return
+
+    new_series.sort(key=lambda x: x.get('imdb_rating', 0), reverse=True)
+
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(new_series) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    series_page = new_series[start_idx:end_idx]
+
+    buttons = []
+    for show in series_page:
+        series_id = str(show["_id"])
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🎌 {show['title']} ({show['year']}) ⭐️ {show['imdb_rating']}",
+                callback_data=f"as:{series_id}"
+            )
+        ])
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"catalog:anime_series:new:{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="Далі ▶️", callback_data=f"catalog:anime_series:new:{page+1}"))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад до аніме-серіалів", callback_data="catalog:anime_series")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await callback.message.edit_text(
+        f"🆕 <b>Новинки аніме-серіалів 2025:</b>\n\n"
+        f"Всього: {len(new_series)}{page_info}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("catalog:anime_series:top:"))
+async def show_anime_series_top(callback: CallbackQuery):
+    """Показати топ аніме-серіалів за рейтингом"""
+
+    parts = callback.data.split(":")
+    page = int(parts[3]) if len(parts) > 3 else 0
+
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+    series = await get_all_anime_series_list(include_hidden=is_admin)
+
+    if not series:
+        await callback.answer("❌ Аніме-серіалів поки немає", show_alert=True)
+        return
+
+    series.sort(key=lambda x: x.get('imdb_rating', 0), reverse=True)
+
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(series) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    series_page = series[start_idx:end_idx]
+
+    buttons = []
+    for show in series_page:
+        series_id = str(show["_id"])
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🎌 {show['title']} ({show['year']}) ⭐️ {show['imdb_rating']}",
+                callback_data=f"as:{series_id}"
+            )
+        ])
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"catalog:anime_series:top:{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="Далі ▶️", callback_data=f"catalog:anime_series:top:{page+1}"))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад до аніме-серіалів", callback_data="catalog:anime_series")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await callback.message.edit_text(
+        f"🏆 <b>Топ аніме-серіалів:</b>\n\n"
+        f"Всього: {len(series)}{page_info}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("catalog:anime_series"))
+async def show_anime_series(callback: CallbackQuery):
+    """Показати список аніме-серіалів"""
+
+    parts = callback.data.split(":")
+    page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+
+    is_admin = callback.from_user.id in config.ADMIN_IDS
+    series = await get_all_anime_series_list(include_hidden=is_admin)
+
+    new_series_count = len([s for s in series if s.get('year') == 2025])
+
+    if not series:
+        await callback.message.edit_text(
+            "🎌 <b>Аніме-серіали</b>\n\n"
+            "Поки що тут порожньо. Аніме-серіали скоро з'являться!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="catalog:anime")]
+            ])
+        )
+        await callback.answer()
+        return
+
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(series) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    series_page = series[start_idx:end_idx]
+
+    buttons = []
+
+    # Фільтри на першій сторінці
+    if page == 0:
+        filter_buttons = []
+        if new_series_count > 0:
+            filter_buttons.append(
+                InlineKeyboardButton(text=f"🆕 Новинки ({new_series_count})", callback_data="catalog:anime_series:new:0")
+            )
+        filter_buttons.append(
+            InlineKeyboardButton(text="🏆 Топ", callback_data="catalog:anime_series:top:0")
+        )
+        if filter_buttons:
+            buttons.append(filter_buttons)
+
+    for show in series_page:
+        series_id = str(show["_id"])
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🎌 {show['title']} ({show['year']}) ⭐️ {show['imdb_rating']}",
+                callback_data=f"as:{series_id}"
+            )
+        ])
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"catalog:anime_series:{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="Далі ▶️", callback_data=f"catalog:anime_series:{page+1}"))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад до аніме", callback_data="catalog:anime")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await callback.message.edit_text(
+        f"🎌 <b>Аніме-серіали</b>\n\n"
+        f"Всього: {len(series)}{page_info}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("as:"))
+async def show_anime_seasons(callback: CallbackQuery, bot: Bot):
+    """Показати сезони аніме-серіалу з пагінацією"""
+
+    parts = callback.data.split(":")
+    series_id = parts[1]
+    page = int(parts[2]) if len(parts) > 2 else 0
+
+    series_info = await get_movie_by_id(series_id)
+
+    if not series_info:
+        await callback.answer("❌ Аніме-серіал не знайдено", show_alert=True)
+        return
+
+    title = series_info["title"]
+    seasons = await get_series_seasons(series_id)
+
+    if not seasons:
+        await callback.answer("❌ Не знайдено сезонів для цього серіалу", show_alert=True)
+        return
+
+    SEASONS_PER_PAGE = 5
+    total_pages = (len(seasons) + SEASONS_PER_PAGE - 1) // SEASONS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * SEASONS_PER_PAGE
+    end_idx = start_idx + SEASONS_PER_PAGE
+    seasons_page = seasons[start_idx:end_idx]
+
+    buttons = []
+    for season in seasons_page:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📺 Сезон {season}",
+                callback_data=f"asn:{series_id}:{season}:0"
+            )
+        ])
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"as:{series_id}:{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="Далі ▶️", callback_data=f"as:{series_id}:{page+1}"))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад до аніме-серіалів", callback_data="catalog:anime_series")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    page_info = f"Сторінка {page + 1}/{total_pages}" if total_pages > 1 else ""
+
+    if page == 0:
+        rating = series_info.get('rating', 0)
+        views = series_info.get('views_count', 0)
+
+        poster_caption = (
+            f"🎌 <b>{series_info['title']}</b>\n\n"
+            f"📅 Рік: {series_info['year']}\n"
+            f"⭐️ IMDB: {series_info['imdb_rating']}\n"
+            f"⭐️ Рейтинг: {rating}\n"
+            f"👁 Перегляди: {views}"
+        )
+
+        try:
+            poster_buttons = await create_content_poster_buttons(series_id, callback.from_user.id)
+            await bot.send_photo(
+                chat_id=callback.from_user.id,
+                photo=series_info.get('poster_file_id'),
+                caption=poster_caption,
+                reply_markup=poster_buttons
+            )
+        except Exception:
+            pass
+
+    await callback.message.edit_text(
+        f"🎌 <b>{title}</b>\n\n"
+        f"Виберіть сезон: (Всього сезонів: {len(seasons)})\n{page_info}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("asn:"))
+async def show_anime_episodes(callback: CallbackQuery):
+    """Показати серії сезону аніме"""
+
+    parts = callback.data.split(":")
+    series_id = parts[1]
+    season = int(parts[2])
+    page = int(parts[3]) if len(parts) > 3 else 0
+
+    series_info = await get_movie_by_id(series_id)
+
+    if not series_info:
+        await callback.answer("❌ Серіал не знайдено", show_alert=True)
+        return
+
+    title = series_info["title"]
+
+    if "seasons" not in series_info or str(season) not in series_info["seasons"]:
+        await callback.answer("❌ Сезон не знайдено", show_alert=True)
+        return
+
+    episodes = series_info["seasons"][str(season)]
+    episode_numbers = sorted([int(ep) for ep in episodes.keys()])
+
+    EPISODES_PER_PAGE = 10
+    total_pages = (len(episode_numbers) + EPISODES_PER_PAGE - 1) // EPISODES_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * EPISODES_PER_PAGE
+    end_idx = start_idx + EPISODES_PER_PAGE
+    episodes_page = episode_numbers[start_idx:end_idx]
+
+    buttons = []
+    for ep_num in episodes_page:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"▶️ Серія {ep_num}",
+                callback_data=f"ae:{series_id}:{season}:{ep_num}"
+            )
+        ])
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"asn:{series_id}:{season}:{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="Далі ▶️", callback_data=f"asn:{series_id}:{season}:{page+1}"))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад до сезонів", callback_data=f"as:{series_id}")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await callback.message.edit_text(
+        f"🎌 <b>{title}</b>\n"
+        f"📺 Сезон {season}\n\n"
+        f"Виберіть серію: (Всього: {len(episode_numbers)}){page_info}",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ae:"))
+async def send_anime_episode(callback: CallbackQuery, bot: Bot):
+    """Відправити серію аніме"""
+
+    parts = callback.data.split(":")
+    series_id = parts[1]
+    season = int(parts[2])
+    episode = int(parts[3])
+
+    episode_data = await get_episode(series_id, season, episode)
+
+    if not episode_data:
+        await callback.answer("❌ Серію не знайдено", show_alert=True)
+        return
+
+    await callback.answer("📤 Відправляю серію...")
+
+    series_info = await get_movie_by_id(series_id)
+
+    # Збільшуємо лічильник переглядів
+    await increment_views(series_id, callback.from_user.id)
+
+    # Додаємо в історію перегляду
+    history_data = {
+        "title": episode_data.get("series_title", ""),
+        "content_type": "anime_series",
+        "season": season,
+        "episode": episode
+    }
+    await add_to_watch_history(callback.from_user.id, series_id, history_data)
+
+    # Формуємо підпис
+    caption = (
+        f"🎌 <b>{episode_data.get('series_title', 'Аніме')}</b>\n"
+        f"📺 Сезон {season} | Серія {episode}\n\n"
+        f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики | Мультфільми Українською</a>"
+    )
+
+    # Відправляємо відео
+    try:
+        video_file_id = episode_data.get("video_file_id")
+        video_type = episode_data.get("video_type", "video")
+
+        if video_type == "video":
+            await bot.send_video(
+                chat_id=callback.from_user.id,
+                video=video_file_id,
+                caption=caption
+            )
+        else:
+            await bot.send_document(
+                chat_id=callback.from_user.id,
+                document=video_file_id,
+                caption=caption
+            )
+    except Exception as e:
+        import logging
+        logging.error(f"Не вдалося відправити серію аніме: {str(e)}")
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=f"❌ На жаль, не вдалося відправити серію.\nСпробуй пізніше."
+        )
