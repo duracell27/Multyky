@@ -2143,8 +2143,6 @@ async def send_anime_episode(callback: CallbackQuery, bot: Bot):
         "season": season,
         "episode": episode
     }
-    import logging
-    logging.info(f"Adding anime to history: {history_data}")
     await add_to_watch_history(callback.from_user.id, series_id, history_data)
 
     # Формуємо підпис

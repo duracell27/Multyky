@@ -28,7 +28,9 @@ from bot.database.movies import (
     get_anime_movies_only_count,
     get_anime_series_only_count,
     get_total_anime_count,
-    get_anime_episodes_count
+    get_anime_episodes_count,
+    # Лайки
+    get_user_liked_content
 )
 from bot.config import config
 from bot.states import SearchStates, HelpStates
@@ -697,6 +699,11 @@ async def show_history_page(message: Message, bot: Bot, page: int = 0, user_id: 
     if nav_buttons:
         buttons.append(nav_buttons)
 
+    # Додаємо кнопку "Сподобались" з кількістю
+    liked_count = len(await get_user_liked_content(user_id, limit=100))
+    liked_text = f"❤️ Сподобались ({liked_count})" if liked_count > 0 else "❤️ Сподобались"
+    buttons.append([InlineKeyboardButton(text=liked_text, callback_data="liked_content:0")])
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
@@ -743,12 +750,21 @@ async def show_watch_later_page(message: Message, bot: Bot, page: int = 0):
             continue
 
         title = series_info.get("title", "Невідомо")
+        content_type = series_info.get("content_type", "series")
+
+        # Вибираємо іконку та callback в залежності від типу контенту
+        if content_type == "anime_series":
+            icon = "🎌"
+            callback = f"as:{series_id}"
+        else:
+            icon = "📺"
+            callback = f"s:{series_id}"
 
         # Створюємо кнопку з посиланням на серіал
         buttons.append([
             InlineKeyboardButton(
-                text=f"📺 {title}",
-                callback_data=f"s:{series_id}"
+                text=f"{icon} {title}",
+                callback_data=callback
             )
         ])
 
@@ -1184,6 +1200,11 @@ async def history_pagination(callback: CallbackQuery, bot: Bot):
     if nav_buttons:
         buttons.append(nav_buttons)
 
+    # Додаємо кнопку "Сподобались" з кількістю
+    liked_count = len(await get_user_liked_content(user_id, limit=100))
+    liked_text = f"❤️ Сподобались ({liked_count})" if liked_count > 0 else "❤️ Сподобались"
+    buttons.append([InlineKeyboardButton(text=liked_text, callback_data="liked_content:0")])
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
@@ -1196,6 +1217,96 @@ async def history_pagination(callback: CallbackQuery, bot: Bot):
         reply_markup=keyboard
     )
 
+    await callback.answer()
+
+
+# Обробник показу лайкнутого контенту
+@router.callback_query(F.data.startswith("liked_content:"))
+async def show_liked_content(callback: CallbackQuery, bot: Bot):
+    """Показати список контенту який користувач лайкнув"""
+    page = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+
+    # Отримуємо лайкнутий контент
+    liked = await get_user_liked_content(user_id, limit=50)
+
+    if not liked:
+        await callback.answer("❤️ У тебе ще немає лайкнутого контенту", show_alert=True)
+        return
+
+    # Пагінація: 10 елементів на сторінку
+    ITEMS_PER_PAGE = 10
+    total_pages = (len(liked) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    liked_page = liked[start_idx:end_idx]
+
+    # Формуємо кнопки
+    buttons = []
+    for item in liked_page:
+        content_id = item.get("_id")
+        title = item.get("title", "Невідомо")
+        content_type = item.get("content_type", "movie")
+        year = item.get("year", "")
+        imdb = item.get("imdb_rating", 0)
+
+        # Вибираємо іконку та callback в залежності від типу контенту
+        if content_type == "series":
+            icon = "📺"
+            callback_data = f"s:{content_id}"
+        elif content_type == "anime_series":
+            icon = "🎌"
+            callback_data = f"as:{content_id}"
+        elif content_type == "anime_movie":
+            icon = "🎌"
+            callback_data = f"am:{content_id}"
+        else:
+            icon = "🎬"
+            callback_data = f"m:{content_id}"
+
+        button_text = f"{icon} {title}"
+        if year:
+            button_text += f" ({year})"
+        if imdb:
+            button_text += f" ⭐️ {imdb}"
+
+        buttons.append([
+            InlineKeyboardButton(text=button_text, callback_data=callback_data)
+        ])
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"liked_content:{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="Далі ▶️", callback_data=f"liked_content:{page+1}"))
+
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    # Кнопка повернення до історії
+    buttons.append([InlineKeyboardButton(text="◀️ До історії", callback_data="back_to_history")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
+    await callback.message.edit_text(
+        f"❤️ <b>Сподобались</b>\n\n"
+        f"Контент який ти лайкнув: {len(liked)}{page_info}\n"
+        "Натисни щоб переглянути 👇",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "back_to_history")
+async def back_to_history(callback: CallbackQuery, bot: Bot):
+    """Повернутися до історії"""
+    await callback.message.delete()
+    # Створюємо фейковий Message об'єкт для виклику show_history_page
+    await show_history_page(callback.message, bot, page=0, user_id=callback.from_user.id)
     await callback.answer()
 
 
@@ -1241,12 +1352,21 @@ async def watchlater_pagination(callback: CallbackQuery, bot: Bot):
             continue
 
         title = series_info.get("title", "Невідомо")
+        content_type = series_info.get("content_type", "series")
+
+        # Вибираємо іконку та callback в залежності від типу контенту
+        if content_type == "anime_series":
+            icon = "🎌"
+            callback = f"as:{series_id}"
+        else:
+            icon = "📺"
+            callback = f"s:{series_id}"
 
         # Створюємо кнопку з посиланням на серіал
         buttons.append([
             InlineKeyboardButton(
-                text=f"📺 {title}",
-                callback_data=f"s:{series_id}"
+                text=f"{icon} {title}",
+                callback_data=callback
             )
         ])
 

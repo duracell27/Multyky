@@ -534,6 +534,29 @@ async def get_user_vote(series_id: str, user_id: int) -> str:
         return None
 
 
+async def get_user_liked_content(user_id: int, limit: int = 50) -> list:
+    """
+    Отримати список контенту який користувач лайкнув
+
+    Args:
+        user_id: ID користувача
+        limit: Максимальна кількість результатів
+
+    Returns: Список контенту з лайками користувача
+    """
+    cursor = db.videos.find(
+        {"likes": user_id},
+        {"title": 1, "year": 1, "imdb_rating": 1, "content_type": 1, "poster_file_id": 1}
+    ).sort("_id", -1).limit(limit)
+
+    result = []
+    async for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        result.append(doc)
+
+    return result
+
+
 async def delete_movie(movie_id: str) -> bool:
     """Видалити фільм"""
     from bson import ObjectId
