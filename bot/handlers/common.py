@@ -644,7 +644,7 @@ async def show_history_page(message: Message, bot: Bot, page: int = 0, user_id: 
         title = item.get("title", "Невідомо")
         content_type = item.get("content_type", "movie")
 
-        # Формуємо текст кнопки
+        # Формуємо текст кнопки в залежності від типу контенту
         if content_type == "series":
             season = item.get("season")
             episode = item.get("episode")
@@ -657,7 +657,23 @@ async def show_history_page(message: Message, bot: Bot, page: int = 0, user_id: 
                 # Якщо немає інформації про епізод - відкриваємо серіал
                 button_text = f"📺 {title}"
                 callback_data = f"s:{movie_id}"
+        elif content_type == "anime_series":
+            season = item.get("season")
+            episode = item.get("episode")
+
+            # Перевіряємо що season і episode є числами
+            if season is not None and episode is not None:
+                button_text = f"🎌 {title} S{season}E{episode}"
+                callback_data = f"ae:{movie_id}:{season}:{episode}"
+            else:
+                # Якщо немає інформації про епізод - відкриваємо аніме-серіал
+                button_text = f"🎌 {title}"
+                callback_data = f"as:{movie_id}"
+        elif content_type == "anime_movie":
+            button_text = f"🎌 {title}"
+            callback_data = f"am:{movie_id}"
         else:
+            # movie - звичайний фільм
             button_text = f"🎬 {title}"
             callback_data = f"m:{movie_id}"
 
@@ -1115,7 +1131,7 @@ async def history_pagination(callback: CallbackQuery, bot: Bot):
         title = item.get("title", "Невідомо")
         content_type = item.get("content_type", "movie")
 
-        # Формуємо текст кнопки
+        # Формуємо текст кнопки в залежності від типу контенту
         if content_type == "series":
             season = item.get("season")
             episode = item.get("episode")
@@ -1128,7 +1144,23 @@ async def history_pagination(callback: CallbackQuery, bot: Bot):
                 # Якщо немає інформації про епізод - відкриваємо серіал
                 button_text = f"📺 {title}"
                 callback_data = f"s:{movie_id}"
+        elif content_type == "anime_series":
+            season = item.get("season")
+            episode = item.get("episode")
+
+            # Перевіряємо що season і episode є числами
+            if season is not None and episode is not None:
+                button_text = f"🎌 {title} S{season}E{episode}"
+                callback_data = f"ae:{movie_id}:{season}:{episode}"
+            else:
+                # Якщо немає інформації про епізод - відкриваємо аніме-серіал
+                button_text = f"🎌 {title}"
+                callback_data = f"as:{movie_id}"
+        elif content_type == "anime_movie":
+            button_text = f"🎌 {title}"
+            callback_data = f"am:{movie_id}"
         else:
+            # movie - звичайний фільм
             button_text = f"🎬 {title}"
             callback_data = f"m:{movie_id}"
 

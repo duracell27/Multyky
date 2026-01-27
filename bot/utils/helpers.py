@@ -18,9 +18,15 @@ async def send_movie_video(bot: Bot, chat_id: int, movie: dict, caption: str = N
 
     Returns:
         Message: Відправлене повідомлення
+
+    Raises:
+        ValueError: Якщо video_file_id відсутній
     """
     video_file_id = movie.get("video_file_id")
     video_type = movie.get("video_type", "video")  # За замовчуванням video
+
+    if not video_file_id:
+        raise ValueError(f"video_file_id відсутній для контенту: {movie.get('title', 'Unknown')}")
 
     if video_type == "video":
         # Відправляємо як звичайне відео

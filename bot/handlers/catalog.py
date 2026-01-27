@@ -1676,7 +1676,11 @@ async def send_anime_movie(callback: CallbackQuery, bot: Bot):
     await increment_views(movie_id, callback.from_user.id)
 
     # Додаємо в історію перегляду
-    await add_to_watch_history(callback.from_user.id, movie_id, movie)
+    history_data = {
+        "title": movie.get("title"),
+        "content_type": "anime_movie"
+    }
+    await add_to_watch_history(callback.from_user.id, movie_id, history_data)
 
     # Відправляємо постер
     rating = movie.get('rating', 0)
@@ -1719,6 +1723,13 @@ async def send_anime_movie(callback: CallbackQuery, bot: Bot):
     try:
         video_file_id = movie.get("video_file_id")
         video_type = movie.get("video_type", "video")
+
+        if not video_file_id:
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text=f"❌ Відео для '{movie.get('title')}' не знайдено"
+            )
+            return
 
         if video_type == "video":
             await bot.send_video(
@@ -2132,6 +2143,8 @@ async def send_anime_episode(callback: CallbackQuery, bot: Bot):
         "season": season,
         "episode": episode
     }
+    import logging
+    logging.info(f"Adding anime to history: {history_data}")
     await add_to_watch_history(callback.from_user.id, series_id, history_data)
 
     # Формуємо підпис
@@ -2145,6 +2158,10 @@ async def send_anime_episode(callback: CallbackQuery, bot: Bot):
     try:
         video_file_id = episode_data.get("video_file_id")
         video_type = episode_data.get("video_type", "video")
+
+        if not video_file_id:
+            await callback.message.answer("❌ Відео для цієї серії не знайдено")
+            return
 
         if video_type == "video":
             sent_message = await bot.send_video(

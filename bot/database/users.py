@@ -143,8 +143,9 @@ async def add_to_watch_history(user_id: int, movie_id: str, movie_data: dict):
         "watched_at": datetime.utcnow()
     }
 
-    # Додаємо сезон і серію якщо це серіал
-    if movie_data.get("content_type") == "series":
+    # Додаємо сезон і серію якщо це серіал або аніме-серіал
+    content_type = movie_data.get("content_type")
+    if content_type in ("series", "anime_series"):
         watch_entry["season"] = movie_data.get("season")
         watch_entry["episode"] = movie_data.get("episode")
 
