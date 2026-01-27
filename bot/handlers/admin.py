@@ -4,6 +4,7 @@ import re
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import MessageOriginChannel, MessageOriginChat
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
@@ -45,6 +46,25 @@ router = Router()
 
 # Locks для синхронізації batch upload (уникнення race condition)
 batch_upload_locks = {}
+
+
+def get_forwarded_chat_id(message: Message) -> int | None:
+    """Отримує ID каналу з якого переслано повідомлення.
+
+    Підтримує як старий forward_from_chat, так і новий forward_origin (Bot API 7.0+).
+    """
+    # Спочатку пробуємо новий метод (forward_origin)
+    if message.forward_origin:
+        if isinstance(message.forward_origin, MessageOriginChannel):
+            return message.forward_origin.chat.id
+        if isinstance(message.forward_origin, MessageOriginChat):
+            return message.forward_origin.sender_chat.id
+
+    # Старий метод (fallback)
+    if message.forward_from_chat:
+        return message.forward_from_chat.id
+
+    return None
 
 
 def is_admin(user_id: int) -> bool:
@@ -348,7 +368,7 @@ async def process_movie_imdb(message: Message, state: FSMContext):
 async def process_movie_poster(message: Message, state: FSMContext):
     """Обробка постера фільму"""
     # Перевіряємо що фото переслано з каналу зберігання
-    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+    if get_forwarded_chat_id(message) != config.STORAGE_CHANNEL_ID:
         await message.answer("❌ Постер має бути пересланий з каналу зберігання!")
         return
 
@@ -375,7 +395,7 @@ async def process_movie_poster_invalid(message: Message, state: FSMContext):
 async def process_movie_video(message: Message, state: FSMContext):
     """Обробка відео фільму"""
     # Перевіряємо що відео переслано з каналу зберігання
-    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+    if get_forwarded_chat_id(message) != config.STORAGE_CHANNEL_ID:
         await message.answer("❌ Відео має бути переслане з каналу зберігання!")
         return
 
@@ -623,7 +643,7 @@ async def process_new_series_poster(message: Message, state: FSMContext, bot: Bo
     from bot.config import config
 
     # Перевіряємо що фото переслано з каналу зберігання
-    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+    if get_forwarded_chat_id(message) != config.STORAGE_CHANNEL_ID:
         await message.answer("❌ Постер має бути пересланий з каналу зберігання!")
         return
 
@@ -825,7 +845,7 @@ async def process_batch_videos(message: Message, state: FSMContext, bot: Bot):
     received_videos = data.get("received_videos", [])
 
     # Перевіряємо що відео переслано з каналу
-    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+    if get_forwarded_chat_id(message) != config.STORAGE_CHANNEL_ID:
         await message.answer("❌ Відео має бути переслане з каналу зберігання!")
         return
 
@@ -1258,7 +1278,7 @@ async def process_super_batch_videos(message: Message, state: FSMContext, bot: B
     received_videos = data.get("received_videos", {})
 
     # Перевіряємо що відео переслано з каналу
-    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+    if get_forwarded_chat_id(message) != config.STORAGE_CHANNEL_ID:
         await message.answer("❌ Відео має бути переслане з каналу зберігання!")
         return
 
@@ -2669,7 +2689,7 @@ async def process_edit_new_value(message: Message, state: FSMContext):
 async def process_edit_poster(message: Message, state: FSMContext):
     """Обробка нового постера"""
     # Перевіряємо що фото переслано з каналу зберігання
-    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+    if get_forwarded_chat_id(message) != config.STORAGE_CHANNEL_ID:
         await message.answer("❌ Постер має бути пересланий з каналу зберігання!")
         return
 
@@ -2701,7 +2721,7 @@ async def process_edit_poster_invalid(message: Message, state: FSMContext):
 async def process_edit_video(message: Message, state: FSMContext):
     """Обробка нового відео для фільму"""
     # Перевіряємо що відео переслано з каналу зберігання
-    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+    if get_forwarded_chat_id(message) != config.STORAGE_CHANNEL_ID:
         await message.answer("❌ Відео має бути переслане з каналу зберігання!")
         return
 
@@ -2844,7 +2864,7 @@ async def process_edit_episode_selection(callback: CallbackQuery, state: FSMCont
 async def process_edit_episode_video(message: Message, state: FSMContext):
     """Обробка нового відео для серії"""
     # Перевіряємо що відео переслано з каналу зберігання
-    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+    if get_forwarded_chat_id(message) != config.STORAGE_CHANNEL_ID:
         await message.answer("❌ Відео має бути переслане з каналу зберігання!")
         return
 
@@ -3270,7 +3290,7 @@ async def process_anime_imdb(message: Message, state: FSMContext):
 @router.message(AddAnimeMovieStates.waiting_for_poster, F.photo)
 async def process_anime_poster(message: Message, state: FSMContext):
     """Обробка постера аніме"""
-    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+    if get_forwarded_chat_id(message) != config.STORAGE_CHANNEL_ID:
         await message.answer(
             "❌ Постер має бути переслано з каналу зберігання!\n"
             "Перешліть фото з правильного каналу."
@@ -3290,7 +3310,7 @@ async def process_anime_poster(message: Message, state: FSMContext):
 @router.message(AddAnimeMovieStates.waiting_for_video, F.video | F.document)
 async def process_anime_video(message: Message, state: FSMContext):
     """Обробка відео аніме та збереження в БД"""
-    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+    if get_forwarded_chat_id(message) != config.STORAGE_CHANNEL_ID:
         await message.answer(
             "❌ Відео має бути переслано з каналу зберігання!\n"
             "Перешліть відео з правильного каналу."
@@ -3474,7 +3494,7 @@ async def process_anime_batch_imdb(message: Message, state: FSMContext):
 @router.message(AddAnimeBatchStates.waiting_for_new_series_poster, F.photo)
 async def process_anime_batch_poster(message: Message, state: FSMContext):
     """Обробка постера та створення аніме-серіалу"""
-    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+    if get_forwarded_chat_id(message) != config.STORAGE_CHANNEL_ID:
         await message.answer("❌ Постер має бути переслано з каналу зберігання!")
         return
 
@@ -3512,7 +3532,7 @@ async def process_anime_batch_poster(message: Message, state: FSMContext):
 @router.message(AddAnimeBatchStates.waiting_for_videos, F.video | F.document)
 async def process_anime_batch_video(message: Message, state: FSMContext):
     """Обробка відео для аніме-серіалу"""
-    if not message.forward_from_chat or message.forward_from_chat.id != config.STORAGE_CHANNEL_ID:
+    if get_forwarded_chat_id(message) != config.STORAGE_CHANNEL_ID:
         await message.answer("❌ Відео має бути переслано з каналу зберігання!")
         return
 
