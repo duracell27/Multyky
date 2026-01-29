@@ -109,3 +109,10 @@ class AddAnimeBatchStates(StatesGroup):
     waiting_for_new_series_poster = State()  # Чекаємо постер
     # Додавання епізодів (автоматично визначаємо сезон і епізод з caption)
     waiting_for_videos = State()  # Чекаємо переслані відео з каналу
+
+
+class PostToChannelStates(StatesGroup):
+    """Стани для постингу в канал новин"""
+    choosing_content_type = State()  # Вибір типу контенту
+    choosing_content = State()  # Вибір фільму/серіалу для постингу
+    waiting_for_caption = State()  # Чекаємо текст посту від адміна

@@ -11,7 +11,7 @@ from bot.config import config
 from bot.states import (
     AddMovieStates, AddBatchMovieStates, DeleteContentStates,
     EditContentStates, AddSuperBatchMovieStates,
-    AddAnimeMovieStates, AddAnimeBatchStates
+    AddAnimeMovieStates, AddAnimeBatchStates, PostToChannelStates
 )
 from bot.database.movies import (
     add_episode_to_series,
@@ -3630,3 +3630,248 @@ async def process_anime_batch_done(message: Message, state: FSMContext):
             )
         else:
             await message.answer("❌ Жодної серії не було додано.")
+
+
+# ===============================================
+# Постинг в канал новин
+# ===============================================
+
+@router.message(Command("post"))
+async def cmd_post_to_channel(message: Message, state: FSMContext):
+    """Початок постингу в канал новин"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
+        return
+
+    if not config.NEWS_CHANNEL_ID:
+        await message.answer(
+            "❌ Канал новин не налаштовано!\n\n"
+            "Додайте <code>NEWS_CHANNEL_ID=@your_channel</code> в .env файл."
+        )
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎬 Мультфільми", callback_data="post_type:movie"),
+            InlineKeyboardButton(text="📺 Мультсеріали", callback_data="post_type:series")
+        ],
+        [
+            InlineKeyboardButton(text="🎌 Аніме-фільми", callback_data="post_type:anime_movie"),
+            InlineKeyboardButton(text="📺 Аніме-серіали", callback_data="post_type:anime_series")
+        ],
+        [InlineKeyboardButton(text="❌ Скасувати", callback_data="post_cancel")]
+    ])
+
+    await message.answer(
+        "📢 <b>Постинг в канал</b>\n\n"
+        "Оберіть тип контенту для публікації:",
+        reply_markup=keyboard
+    )
+    await state.set_state(PostToChannelStates.choosing_content_type)
+
+
+@router.callback_query(F.data == "post_cancel")
+async def cancel_post(callback: CallbackQuery, state: FSMContext):
+    """Скасування постингу"""
+    await state.clear()
+    await callback.message.edit_text("❌ Постинг скасовано.")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("post_type:"), PostToChannelStates.choosing_content_type)
+async def choose_post_content_type(callback: CallbackQuery, state: FSMContext):
+    """Вибір типу контенту для постингу"""
+    content_type = callback.data.split(":")[1]
+    await state.update_data(content_type=content_type)
+
+    # Отримуємо список контенту відповідного типу
+    if content_type == "movie":
+        content_list = await get_all_movies_list()
+        type_name = "мультфільмів"
+    elif content_type == "series":
+        content_list = await get_all_series_list()
+        type_name = "мультсеріалів"
+    elif content_type == "anime_movie":
+        content_list = await get_all_anime_movies_list()
+        type_name = "аніме-фільмів"
+    else:  # anime_series
+        content_list = await get_all_anime_series_list()
+        type_name = "аніме-серіалів"
+
+    if not content_list:
+        await callback.message.edit_text(f"❌ Немає {type_name} для публікації.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    # Зберігаємо список та показуємо першу сторінку
+    await state.update_data(content_list=content_list, page=0)
+    await show_post_content_page(callback.message, state)
+    await callback.answer()
+
+
+async def show_post_content_page(message: Message, state: FSMContext):
+    """Показати сторінку з контентом для постингу"""
+    data = await state.get_data()
+    content_list = data.get("content_list", [])
+    page = data.get("page", 0)
+    items_per_page = 8
+
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    page_items = content_list[start_idx:end_idx]
+
+    buttons = []
+    for item in page_items:
+        title = item.get("title", "Без назви")
+        year = item.get("year", "")
+        item_id = str(item.get("_id"))
+        buttons.append([InlineKeyboardButton(
+            text=f"{title} ({year})",
+            callback_data=f"post_select:{item_id}"
+        )])
+
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data="post_page:prev"))
+    if end_idx < len(content_list):
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data="post_page:next"))
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="post_cancel")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    total_pages = (len(content_list) + items_per_page - 1) // items_per_page
+    await message.edit_text(
+        f"📢 <b>Оберіть контент для публікації</b>\n\n"
+        f"Сторінка {page + 1} з {total_pages}",
+        reply_markup=keyboard
+    )
+    await state.set_state(PostToChannelStates.choosing_content)
+
+
+@router.callback_query(F.data.startswith("post_page:"), PostToChannelStates.choosing_content)
+async def navigate_post_pages(callback: CallbackQuery, state: FSMContext):
+    """Навігація по сторінках контенту"""
+    direction = callback.data.split(":")[1]
+    data = await state.get_data()
+    page = data.get("page", 0)
+
+    if direction == "next":
+        page += 1
+    else:
+        page = max(0, page - 1)
+
+    await state.update_data(page=page)
+    await show_post_content_page(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("post_select:"), PostToChannelStates.choosing_content)
+async def select_content_to_post(callback: CallbackQuery, state: FSMContext):
+    """Вибір контенту - запит тексту посту"""
+    content_id = callback.data.split(":")[1]
+    data = await state.get_data()
+    content_type = data.get("content_type")
+
+    # Отримуємо повну інформацію про контент
+    content = await get_movie_by_id(content_id)
+    if not content:
+        await callback.message.edit_text("❌ Контент не знайдено.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    title = content.get("title", "Без назви")
+    year = content.get("year", "")
+
+    # Зберігаємо дані про вибраний контент
+    await state.update_data(
+        content_id=content_id,
+        content_title=title,
+        content_year=year,
+        poster_file_id=content.get("poster_file_id")
+    )
+
+    await callback.message.edit_text(
+        f"📝 <b>Обрано:</b> {title} ({year})\n\n"
+        f"Напишіть текст для посту в канал:\n\n"
+        f"<i>(або /cancel для скасування)</i>"
+    )
+    await state.set_state(PostToChannelStates.waiting_for_caption)
+    await callback.answer()
+
+
+@router.message(PostToChannelStates.waiting_for_caption, F.text == "/cancel")
+async def cancel_post_caption(message: Message, state: FSMContext):
+    """Скасування введення тексту"""
+    await state.clear()
+    await message.answer("❌ Постинг скасовано.")
+
+
+@router.message(PostToChannelStates.waiting_for_caption, F.text)
+async def process_post_caption(message: Message, state: FSMContext, bot: Bot):
+    """Обробка тексту посту та публікація"""
+    caption = message.text.strip()
+    data = await state.get_data()
+
+    content_id = data.get("content_id")
+    content_type = data.get("content_type")
+    title = data.get("content_title")
+    year = data.get("content_year")
+    poster_file_id = data.get("poster_file_id")
+
+    await message.answer("⏳ Публікую в канал...")
+
+    # Кнопка для перегляду в боті
+    bot_info = await bot.get_me()
+    if content_type == "movie":
+        deep_link_prefix = "m_"
+    elif content_type == "series":
+        deep_link_prefix = "s_"
+    elif content_type == "anime_movie":
+        deep_link_prefix = "am_"
+    else:  # anime_series
+        deep_link_prefix = "as_"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="👀 Дивитися в боті",
+            url=f"https://t.me/{bot_info.username}?start={deep_link_prefix}{content_id}"
+        )]
+    ])
+
+    try:
+        # Відправляємо в канал (з підтримкою Markdown форматування)
+        if poster_file_id:
+            await bot.send_photo(
+                chat_id=config.NEWS_CHANNEL_ID,
+                photo=poster_file_id,
+                caption=caption,
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
+        else:
+            await bot.send_message(
+                chat_id=config.NEWS_CHANNEL_ID,
+                text=caption,
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
+
+        await message.answer(
+            f"✅ <b>Успішно опубліковано!</b>\n\n"
+            f"📺 {title} ({year})\n\n"
+            f"Канал: {config.NEWS_CHANNEL_ID}"
+        )
+    except Exception as e:
+        await message.answer(
+            f"❌ <b>Помилка публікації!</b>\n\n"
+            f"<code>{str(e)}</code>\n\n"
+            "Перевірте чи бот є адміністратором каналу."
+        )
+
+    await state.clear()

@@ -25,6 +25,9 @@ class Config:
     # Канал для зберігання відео
     STORAGE_CHANNEL_ID = int(os.getenv("STORAGE_CHANNEL_ID", "0"))
 
+    # Канал для новин (постинг фільмів)
+    NEWS_CHANNEL_ID = os.getenv("NEWS_CHANNEL_ID", "")
+
     @classmethod
     def validate(cls):
         """Перевірка наявності обов'язкових налаштувань"""

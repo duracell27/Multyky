@@ -1,0 +1,15 @@
+2026-01-29 10:29:09,034 - root - INFO - 👑 Admin IDs: [46412059, 761287153, 8397750597]
+2026-01-29 10:29:09,681 - bot.database.mongodb - INFO - ✅ Підключено до MongoDB: multyky_db
+2026-01-29 10:29:09,722 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-01-29 10:29:09,723 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-01-29 10:29:09,724 - apscheduler.scheduler - INFO - Added job "Щоденний звіт про нові реєстрації" to job store "default"
+2026-01-29 10:29:09,724 - apscheduler.scheduler - INFO - Added job "Перевірка запланованих розсилок" to job store "default"
+2026-01-29 10:29:09,724 - apscheduler.scheduler - INFO - Scheduler started
+2026-01-29 10:29:09,724 - root - INFO - ⏰ Scheduler запущено. Щоденний звіт буде відправлятися о 22:00 (Europe/Kiev)
+2026-01-29 10:29:09,724 - root - INFO - ⏰ Наступний запуск: 2026-01-29 22:00:00 EET
+2026-01-29 10:29:09,918 - root - INFO - ✅ Меню команд налаштовано
+2026-01-29 10:29:09,918 - root - INFO - 🤖 Бот запущено!
+2026-01-29 10:29:09,918 - aiogram.dispatcher - INFO - Start polling
+2026-01-29 10:29:09,970 - aiogram.dispatcher - INFO - Run polling for bot @MultykydevBot id=8286104836 - 'MyCartoonBot_user1_Dev'
+2026-01-29 10:30:00,000 - apscheduler.executors.default - INFO - Running job "Перевірка запланованих розсилок (trigger: cron[minute='*/5'], next run at: 2026-01-29 10:35:00 EET)" (scheduled at 2026-01-29 10:30:00+02:00)
+2026-01-29 10:30:00,035 - apscheduler.executors.default - INFO - Job "Перевірка запланованих розсилок (trigger: cron[minute='*/5'], next run at: 2026-01-29 10:35:00 EET)" executed successfully
