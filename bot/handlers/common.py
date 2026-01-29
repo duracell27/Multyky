@@ -875,10 +875,19 @@ async def process_search_query(message: Message, state: FSMContext, bot: Bot):
         imdb_rating = content.get("imdb_rating", 0)
         content_type = content.get("content_type", "movie")
 
-        # Формуємо текст кнопки
-        if content_type == "series":
+        # Формуємо текст кнопки залежно від типу контенту
+        if content_type == "movie":
+            emoji = "🎬"
+            callback_data = f"m:{content_id}"
+        elif content_type == "series":
             emoji = "📺"
             callback_data = f"s:{content_id}:0"
+        elif content_type == "anime_movie":
+            emoji = "🎌"
+            callback_data = f"am:{content_id}"
+        elif content_type == "anime_series":
+            emoji = "🎌"
+            callback_data = f"as:{content_id}:0"
         else:
             emoji = "🎬"
             callback_data = f"m:{content_id}"
