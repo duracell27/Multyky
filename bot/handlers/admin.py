@@ -2371,6 +2371,9 @@ async def process_edit_content_selection(callback: CallbackQuery, state: FSMCont
     else:  # series
         buttons.append([InlineKeyboardButton(text="📺 Замінити серію", callback_data=f"editfield:episode_video:{content_id}")])
 
+    # Кнопка зміни типу контенту
+    buttons.append([InlineKeyboardButton(text="🔄 Тип контенту", callback_data=f"editfield:content_type:{content_id}")])
+
     # Додаємо кнопку приховування/показування
     is_hidden = content.get("is_hidden", False)
     visibility_text = "👁 Показати" if is_hidden else "🔒 Приховати"
@@ -2421,6 +2424,30 @@ async def process_edit_field_selection(callback: CallbackQuery, state: FSMContex
 
     # Зберігаємо поле яке редагуємо
     await state.update_data(edit_field=field)
+
+    # Обробка зміни типу контенту
+    if field == "content_type":
+        content = await get_movie_by_id(content_id)
+        current_type = content.get("content_type", "movie") if content else "movie"
+        type_labels = {
+            "movie": "🎬 Мультфільм",
+            "series": "📺 Мультсеріал",
+            "anime_movie": "🎌 Аніме фільм",
+            "anime_series": "🎌📺 Аніме серіал",
+        }
+        buttons = []
+        for t, label in type_labels.items():
+            mark = " ✅" if t == current_type else ""
+            buttons.append([InlineKeyboardButton(text=f"{label}{mark}", callback_data=f"set_content_type:{content_id}:{t}")])
+        buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="editfield:cancel")])
+        await callback.message.edit_text(
+            f"🔄 <b>Зміна типу контенту</b>\n\n"
+            f"Поточний тип: <b>{type_labels.get(current_type, current_type)}</b>\n\n"
+            f"Оберіть новий тип:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+        await callback.answer()
+        return
 
     # Обробка постера
     if field == "poster":
@@ -2905,6 +2932,35 @@ async def process_edit_episode_video_invalid(message: Message, state: FSMContext
         "❌ Будь ласка, переслати відео файл з каналу зберігання.\n\n"
         "Якщо хочете скасувати, введіть /cancel"
     )
+
+
+# ===============================================
+# Зміна типу контенту
+# ===============================================
+
+@router.callback_query(EditContentStates.choosing_field, F.data.startswith("set_content_type:"))
+async def process_set_content_type(callback: CallbackQuery, state: FSMContext):
+    """Зміна типу контенту (movie/series/anime_movie/anime_series)"""
+    parts = callback.data.split(":")
+    content_id = parts[1]
+    new_type = parts[2]
+
+    type_labels = {
+        "movie": "🎬 Мультфільм",
+        "series": "📺 Мультсеріал",
+        "anime_movie": "🎌 Аніме фільм",
+        "anime_series": "🎌📺 Аніме серіал",
+    }
+
+    success = await update_movie_field(content_id, "content_type", new_type)
+    if success:
+        await callback.message.edit_text(
+            f"✅ Тип контенту змінено на <b>{type_labels.get(new_type, new_type)}</b>"
+        )
+    else:
+        await callback.message.edit_text("❌ Не вдалося змінити тип контенту.")
+    await state.clear()
+    await callback.answer()
 
 
 # ===============================================
