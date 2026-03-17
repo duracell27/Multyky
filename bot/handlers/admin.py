@@ -486,6 +486,43 @@ async def process_movie_video_invalid(message: Message, state: FSMContext):
 # Пакетне додавання серій (Batch Upload)
 # ===============================================
 
+async def _show_batch_series_page(message, series_list: list, page: int, edit: bool = False):
+    """Показати сторінку серіалів для addBatchMovie"""
+    ITEMS_PER_PAGE = 15
+    total_pages = max(1, (len(series_list) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+
+    start = page * ITEMS_PER_PAGE
+    page_items = series_list[start:start + ITEMS_PER_PAGE]
+
+    buttons = []
+    for series in page_items:
+        series_id = str(series["_id"])
+        buttons.append([InlineKeyboardButton(
+            text=f"📺 {series['title']}",
+            callback_data=f"sel_series:{series_id}"
+        )])
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"batchpage:{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"batchpage:{page+1}"))
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="➕ Створити новий серіал", callback_data="create_new_series")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    page_info = f" · стор. {page+1}/{total_pages}" if total_pages > 1 else ""
+    text = f"📺 <b>Виберіть серіал для додавання серій{page_info}:</b>"
+
+    if edit:
+        await message.edit_text(text, reply_markup=keyboard)
+    else:
+        await message.answer(text, reply_markup=keyboard)
+
+
 @router.message(Command("addBatchMovie"))
 async def cmd_add_batch_movie(message: Message, state: FSMContext):
     """Початок процесу пакетного додавання серій"""
@@ -493,36 +530,18 @@ async def cmd_add_batch_movie(message: Message, state: FSMContext):
         await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
         return
 
-    # Отримуємо список серіалів (включно з прихованими для адмінів)
     series_list = await get_all_series_list(include_hidden=True)
-
-    # Створюємо кнопки для вибору серіалу (тільки назва)
-    buttons = []
-    if series_list:
-        for series in series_list:
-            series_id = str(series["_id"])
-            buttons.append([
-                InlineKeyboardButton(
-                    text=f"📺 {series['title']}",
-                    callback_data=f"sel_series:{series_id}"
-                )
-            ])
-
-    # Додаємо кнопку для створення нового серіалу
-    buttons.append([
-        InlineKeyboardButton(
-            text="➕ Створити новий серіал",
-            callback_data="create_new_series"
-        )
-    ])
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-    await message.answer(
-        "📺 <b>Виберіть серіал для додавання серій:</b>",
-        reply_markup=keyboard
-    )
+    await _show_batch_series_page(message, series_list, page=0)
     await state.set_state(AddBatchMovieStates.choosing_existing_series)
+
+
+@router.callback_query(AddBatchMovieStates.choosing_existing_series, F.data.startswith("batchpage:"))
+async def navigate_batch_series_pages(callback: CallbackQuery, state: FSMContext):
+    """Навігація по сторінках серіалів у addBatchMovie"""
+    page = int(callback.data.split(":")[1])
+    series_list = await get_all_series_list(include_hidden=True)
+    await _show_batch_series_page(callback.message, series_list, page=page, edit=True)
+    await callback.answer()
 
 
 @router.callback_query(AddBatchMovieStates.choosing_existing_series, F.data.startswith("sel_series:"))

@@ -55,6 +55,11 @@ class MongoDB:
         """Колекція розсилок"""
         return self.db.broadcasts
 
+    @property
+    def scheduled_posts(self):
+        """Колекція запланованих постів в канал"""
+        return self.db.scheduled_posts
+
 
 # Глобальний екземпляр
 db = MongoDB()
