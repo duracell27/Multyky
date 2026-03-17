@@ -174,6 +174,23 @@ async def get_watch_history(user_id: int, limit: int = 50) -> list:
     return []
 
 
+async def get_recent_views_all_users(limit: int = 5) -> list:
+    """Отримати останні N переглядів по всіх користувачах"""
+    pipeline = [
+        {"$unwind": "$watch_history"},
+        {"$sort": {"watch_history.watched_at": -1}},
+        {"$limit": limit},
+        {"$project": {
+            "user_id": 1,
+            "first_name": 1,
+            "username": 1,
+            "entry": "$watch_history"
+        }}
+    ]
+    cursor = db.users.aggregate(pipeline)
+    return await cursor.to_list(length=None)
+
+
 async def add_to_watch_later(user_id: int, series_id: str) -> bool:
     """Додати серіал в чергу перегляду"""
     result = await db.users.update_one(

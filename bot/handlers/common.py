@@ -1,3 +1,4 @@
+import base64
 from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
@@ -10,7 +11,8 @@ from bot.database.users import (
     get_watch_history,
     get_watch_later,
     add_to_watch_history,
-    is_movie_watched
+    is_movie_watched,
+    get_recent_views_all_users
 )
 from bot.database.movies import (
     get_movies_count,
@@ -24,6 +26,8 @@ from bot.database.movies import (
     search_content,
     increment_views,
     get_series_seasons,
+    get_movies_by_series_name,
+    get_anime_movies_by_series_name,
     # Аніме
     get_anime_movies_only_count,
     get_anime_series_only_count,
@@ -33,7 +37,7 @@ from bot.database.movies import (
     get_user_liked_content
 )
 from bot.config import config
-from bot.states import SearchStates, HelpStates
+from bot.states import SearchStates, HelpStates, AdminReplyStates
 
 router = Router()
 
@@ -388,6 +392,111 @@ async def send_anime_series_from_deeplink(message: Message, bot: Bot, series_id:
     await message.answer("Приємного перегляду! 🍿", reply_markup=get_main_keyboard(is_admin))
 
 
+async def send_movie_collection_from_deeplink(message: Message, bot: Bot, encoded_name: str, is_admin: bool):
+    """Показати серію фільмів через deep link (mc_<base64_name>)"""
+    try:
+        series_name = base64.urlsafe_b64decode(encoded_name + '==').decode()
+    except Exception:
+        await message.answer("❌ Некоректне посилання.", reply_markup=get_main_keyboard(is_admin))
+        return
+
+    movies = await get_movies_by_series_name(series_name, include_hidden=is_admin)
+
+    if not movies:
+        await message.answer(
+            "❌ Серія фільмів не знайдена або була видалена.\n"
+            "Скористайся /catalog для перегляду доступних фільмів.",
+            reply_markup=get_main_keyboard(is_admin)
+        )
+        return
+
+    # Постер першого фільму як обкладинка серії
+    poster_file_id = movies[0].get('poster_file_id')
+    if poster_file_id:
+        try:
+            await bot.send_photo(
+                chat_id=message.from_user.id,
+                photo=poster_file_id,
+                caption=f"📁 <b>{series_name}</b>\n\nВсього частин: <b>{len(movies)}</b>"
+            )
+        except Exception:
+            pass
+
+    buttons = []
+    for movie in movies:
+        movie_id = str(movie["_id"])
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🎬 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
+                callback_data=f"m:{movie_id}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="🎬 Каталог фільмів", callback_data="catalog:movies")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
+        f"📁 <b>{series_name}</b>\n\nОберіть частину для перегляду 👇",
+        reply_markup=keyboard
+    )
+    await message.answer("Приємного перегляду! 🍿", reply_markup=get_main_keyboard(is_admin))
+
+
+async def send_anime_movie_collection_from_deeplink(message: Message, bot: Bot, encoded_name: str, is_admin: bool):
+    """Показати серію аніме-фільмів через deep link (amc_<base64_name>)"""
+    try:
+        series_name = base64.urlsafe_b64decode(encoded_name + '==').decode()
+    except Exception:
+        await message.answer("❌ Некоректне посилання.", reply_markup=get_main_keyboard(is_admin))
+        return
+
+    movies = await get_anime_movies_by_series_name(series_name, include_hidden=is_admin)
+
+    if not movies:
+        await message.answer(
+            "❌ Серія аніме не знайдена або була видалена.\n"
+            "Скористайся /catalog для перегляду доступного аніме.",
+            reply_markup=get_main_keyboard(is_admin)
+        )
+        return
+
+    poster_file_id = movies[0].get('poster_file_id')
+    if poster_file_id:
+        try:
+            await bot.send_photo(
+                chat_id=message.from_user.id,
+                photo=poster_file_id,
+                caption=f"🎌 <b>{series_name}</b>\n\nВсього частин: <b>{len(movies)}</b>"
+            )
+        except Exception:
+            pass
+
+    buttons = []
+    for movie in movies:
+        movie_id = str(movie["_id"])
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🎌 {movie['title']} ({movie['year']}) ⭐️ {movie['imdb_rating']}",
+                callback_data=f"am:{movie_id}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="🎌 Каталог аніме", callback_data="catalog:anime")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
+        f"🎌 <b>{series_name}</b>\n\nОберіть частину для перегляду 👇",
+        reply_markup=keyboard
+    )
+    await message.answer("Приємного перегляду! 🍿", reply_markup=get_main_keyboard(is_admin))
+
+
 def get_main_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
     """Створити головну клавіатуру для користувача"""
 
@@ -426,8 +535,20 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot, command: Comm
     if command.args:
         deep_link = command.args.strip()
 
+        # Обробка deep link для серії фільмів: mc_<base64_name>
+        if deep_link.startswith("mc_"):
+            encoded = deep_link[3:]
+            await send_movie_collection_from_deeplink(message, bot, encoded, is_admin)
+            return
+
+        # Обробка deep link для серії аніме-фільмів: amc_<base64_name>
+        elif deep_link.startswith("amc_"):
+            encoded = deep_link[4:]
+            await send_anime_movie_collection_from_deeplink(message, bot, encoded, is_admin)
+            return
+
         # Обробка deep link для мультфільму: m_<id>
-        if deep_link.startswith("m_"):
+        elif deep_link.startswith("m_"):
             movie_id = deep_link[2:]  # Видаляємо "m_"
             await send_movie_from_deeplink(message, bot, movie_id, is_admin)
             return
@@ -558,6 +679,7 @@ async def cmd_stats(message: Message):
     total_views_count = await get_total_views_count()
     total_storage_gb = await get_total_storage_size()
     top_content = await get_top_content_by_views(5)
+    recent_views = await get_recent_views_all_users(5)
 
     # Формуємо текст топ-5
     top_text = ""
@@ -580,6 +702,32 @@ async def cmd_stats(message: Message):
     else:
         top_text = "   Немає даних\n"
 
+    # Формуємо текст останніх переглядів
+    recent_text = ""
+    if recent_views:
+        for item in recent_views:
+            entry = item.get("entry", {})
+            title = entry.get("title", "Без назви")
+            ct = entry.get("content_type", "movie")
+            watched_at = entry.get("watched_at")
+            first_name = item.get("first_name", "")
+            username = item.get("username")
+            user_label = f"@{username}" if username else first_name
+
+            if ct == "movie":
+                emoji = "🎬"
+            elif ct == "series":
+                emoji = "📺"
+            elif ct in ("anime_movie", "anime_series"):
+                emoji = "🎌"
+            else:
+                emoji = "🎬"
+
+            time_str = watched_at.strftime("%d.%m %H:%M") if watched_at else ""
+            recent_text += f"   {emoji} {title} — {user_label} [{time_str}]\n"
+    else:
+        recent_text = "   Немає даних\n"
+
     stats_text = (
         "📊 <b>Статистика бота:</b>\n\n"
         "👥 <b>Користувачі:</b>\n"
@@ -597,6 +745,8 @@ async def cmd_stats(message: Message):
         f"   • Всього переглядів: {total_views_count}\n\n"
         "🏆 <b>Топ-5 по переглядах:</b>\n"
         f"{top_text}\n"
+        "🕐 <b>Останні 5 переглядів:</b>\n"
+        f"{recent_text}\n"
         "💾 <b>Сховище:</b>\n"
         f"   • Загальний розмір: {total_storage_gb} ГБ\n\n"
         f"<i>Статистика оновлюється в реальному часі</i>"
@@ -1000,11 +1150,16 @@ async def process_help_request(message: Message, state: FSMContext, bot: Bot):
     admin_message += f"\nUsername: {username}\n\n"
     admin_message += f"📝 <b>Запит:</b>\n{user_request}"
 
+    # Кнопка відповіді адміна юзеру
+    reply_keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📩 Відповісти", callback_data=f"admin_reply:{user.id}")
+    ]])
+
     # Надсилаємо повідомлення всім адмінам
     sent_count = 0
     for admin_id in config.ADMIN_IDS:
         try:
-            await bot.send_message(admin_id, admin_message)
+            await bot.send_message(admin_id, admin_message, reply_markup=reply_keyboard)
             sent_count += 1
         except Exception as e:
             import logging
@@ -1087,11 +1242,16 @@ async def process_help_message(message: Message, state: FSMContext, bot: Bot):
     admin_message += f"\nUsername: {username}\n\n"
     admin_message += f"📩 <b>Повідомлення:</b>\n{user_message}"
 
+    # Кнопка відповіді адміна юзеру
+    reply_keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📩 Відповісти", callback_data=f"admin_reply:{user.id}")
+    ]])
+
     # Надсилаємо повідомлення всім адмінам
     sent_count = 0
     for admin_id in config.ADMIN_IDS:
         try:
-            await bot.send_message(admin_id, admin_message)
+            await bot.send_message(admin_id, admin_message, reply_markup=reply_keyboard)
             sent_count += 1
         except Exception as e:
             import logging
@@ -1113,6 +1273,51 @@ async def process_help_message(message: Message, state: FSMContext, bot: Bot):
             "На жаль, не вдалося надіслати повідомлення адміністраторам. Спробуйте пізніше.\n\n"
             "Повернутися до /menu"
         )
+
+
+@router.callback_query(F.data.startswith("admin_reply:"))
+async def admin_reply_start(callback: CallbackQuery, state: FSMContext):
+    """Адмін натиснув 'Відповісти' — просимо ввести текст"""
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔️ Тільки для адміністраторів", show_alert=True)
+        return
+
+    target_user_id = int(callback.data.split(":")[1])
+    await state.set_state(AdminReplyStates.waiting_for_reply)
+    await state.update_data(target_user_id=target_user_id)
+
+    await callback.message.answer(
+        f"📩 <b>Відповідь користувачу</b> (ID: <code>{target_user_id}</code>)\n\n"
+        "Напишіть текст відповіді:\n\n"
+        "<i>(або /cancel для скасування)</i>"
+    )
+    await callback.answer()
+
+
+@router.message(AdminReplyStates.waiting_for_reply, F.text)
+async def admin_reply_send(message: Message, state: FSMContext, bot: Bot):
+    """Відправляємо відповідь адміна юзеру"""
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("❌ Відповідь скасовано.")
+        return
+
+    data = await state.get_data()
+    target_user_id = data.get("target_user_id")
+
+    try:
+        await bot.send_message(
+            chat_id=target_user_id,
+            text=f"💬 <b>Повідомлення від адміністратора:</b>\n\n{message.text}"
+        )
+        await message.answer(f"✅ Відповідь надіслано користувачу (ID: <code>{target_user_id}</code>)")
+    except Exception as e:
+        await message.answer(
+            f"❌ Не вдалося надіслати повідомлення.\n\n"
+            f"<code>{str(e)}</code>"
+        )
+
+    await state.clear()
 
 
 # Обробник пагінації історії
@@ -1481,8 +1686,48 @@ async def btn_admin(message: Message):
         "/post - Опублікувати в канал\n\n"
         "<b>Статистика:</b>\n"
         "/stats - Статистика бота\n\n"
+        "<b>Користувачі:</b>\n"
+        "/message - Написати юзеру по ID\n\n"
         "<b>Інше:</b>\n"
         "/cancel - Скасувати поточну дію"
+    )
+
+
+@router.message(Command("message"))
+async def cmd_message_user(message: Message, state: FSMContext):
+    """Написати повідомлення юзеру по ID"""
+    if message.from_user.id not in config.ADMIN_IDS:
+        await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
+        return
+
+    await state.set_state(AdminReplyStates.waiting_for_user_id)
+    await message.answer(
+        "✉️ <b>Повідомлення юзеру</b>\n\n"
+        "Введіть <b>ID користувача</b> якому хочете написати:\n\n"
+        "<i>(або /cancel для скасування)</i>"
+    )
+
+
+@router.message(AdminReplyStates.waiting_for_user_id, F.text)
+async def process_message_user_id(message: Message, state: FSMContext):
+    """Отримуємо ID юзера від адміна"""
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("❌ Скасовано.")
+        return
+
+    if not message.text.strip().lstrip("-").isdigit():
+        await message.answer("❌ ID має бути числом. Спробуйте ще раз:")
+        return
+
+    target_user_id = int(message.text.strip())
+    await state.update_data(target_user_id=target_user_id)
+    await state.set_state(AdminReplyStates.waiting_for_reply)
+
+    await message.answer(
+        f"📝 Пишете юзеру <code>{target_user_id}</code>\n\n"
+        "Введіть текст повідомлення:\n\n"
+        "<i>(або /cancel для скасування)</i>"
     )
 
 

@@ -73,6 +73,12 @@ class HelpStates(StatesGroup):
     waiting_for_message = State()  # Чекаємо повідомлення адміну
 
 
+class AdminReplyStates(StatesGroup):
+    """Стани для відповіді адміна конкретному юзеру"""
+    waiting_for_user_id = State()  # Чекаємо ID юзера (для /message)
+    waiting_for_reply = State()  # Чекаємо текст відповіді
+
+
 class BroadcastStates(StatesGroup):
     """Стани для створення розсилки"""
     waiting_for_title = State()  # Чекаємо заголовок розсилки
@@ -116,3 +122,5 @@ class PostToChannelStates(StatesGroup):
     choosing_content_type = State()  # Вибір типу контенту
     choosing_content = State()  # Вибір фільму/серіалу для постингу
     waiting_for_caption = State()  # Чекаємо текст посту від адміна
+    confirming_post = State()       # Підтвердження: зараз чи запланувати
+    waiting_for_schedule_time = State()  # Чекаємо дату/час публікації

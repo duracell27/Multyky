@@ -12,6 +12,26 @@ from bot.handlers import common_router, admin_router, catalog_router, broadcast_
 from bot.database.users import send_daily_registration_report
 from bot.database.broadcasts import get_scheduled_broadcasts
 from bot.handlers.broadcast import send_broadcast_to_users
+from bot.database.scheduled_posts import get_due_scheduled_posts, mark_post_as_sent
+from bot.handlers.admin import _send_post_to_channel
+
+
+async def check_and_send_scheduled_posts(bot: Bot):
+    """Перевірити і відправити заплановані пости в канал"""
+    posts = await get_due_scheduled_posts()
+    for post in posts:
+        post_id = str(post["_id"])
+        try:
+            await _send_post_to_channel(
+                bot,
+                caption=post["caption"],
+                deep_link_url=post["deep_link_url"],
+                poster_file_id=post.get("poster_file_id"),
+            )
+            await mark_post_as_sent(post_id)
+            logging.info(f"Запланований пост відправлено: {post.get('content_title')}")
+        except Exception as e:
+            logging.error(f"Помилка відправки запланованого посту {post_id}: {e}")
 
 
 async def check_and_send_scheduled_broadcasts(bot: Bot):
@@ -79,10 +99,20 @@ async def main():
     # Додаємо завдання для перевірки запланованих розсилок (кожні 5 хвилин)
     scheduler.add_job(
         check_and_send_scheduled_broadcasts,
-        trigger=CronTrigger(minute='*/5'),  # Кожні 5 хвилин
+        trigger=CronTrigger(minute='*/5'),
         args=[bot],
         id='check_scheduled_broadcasts',
         name='Перевірка запланованих розсилок',
+        replace_existing=True
+    )
+
+    # Перевірка запланованих постів в канал (кожну хвилину)
+    scheduler.add_job(
+        check_and_send_scheduled_posts,
+        trigger=CronTrigger(minute='*'),
+        args=[bot],
+        id='check_scheduled_posts',
+        name='Перевірка запланованих постів в канал',
         replace_existing=True
     )
 

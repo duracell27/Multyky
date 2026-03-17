@@ -654,9 +654,12 @@ async def show_series_top(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "catalog:series")
+@router.callback_query(F.data.regexp(r"^catalog:series(:\d+)?$"))
 async def show_series(callback: CallbackQuery):
-    """Показати список серіалів"""
+    """Показати список серіалів з пагінацією"""
+
+    parts = callback.data.split(":")
+    page = int(parts[2]) if len(parts) > 2 else 0
 
     # Адміни бачать всі серіали, включаючи приховані
     is_admin = callback.from_user.id in config.ADMIN_IDS
@@ -667,14 +670,17 @@ async def show_series(callback: CallbackQuery):
         await callback.answer()
         return
 
-    # Підраховуємо кількість новинок (серіали 2025 року)
-    new_series_2025 = [s for s in series if s.get('year') == 2025]
-    new_series_count = len(new_series_2025)
+    # Пагінація: 15 елементів на сторінку
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(series) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
 
-    # Створюємо кнопки для кожного серіалу
-    buttons = []
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    page_items = series[start_idx:end_idx]
 
-    # Додаємо кнопки "Новинки" і "Топ" на початку
+    # Кнопки фільтрів
+    new_series_count = len([s for s in series if s.get('year') == 2025])
     filter_buttons = []
     if new_series_count > 0:
         filter_buttons.append(
@@ -684,12 +690,9 @@ async def show_series(callback: CallbackQuery):
         InlineKeyboardButton(text="🏆 Топ", callback_data="catalog:series:top:0")
     )
 
-    # Вставляємо кнопки фільтрів на початок списку кнопок
-    if filter_buttons:
-        buttons.append(filter_buttons)
+    buttons = [filter_buttons]
 
-    for show in series:
-        # В новій структурі використовуємо _id
+    for show in page_items:
         series_id = str(show["_id"])
         buttons.append([
             InlineKeyboardButton(
@@ -698,16 +701,25 @@ async def show_series(callback: CallbackQuery):
             )
         ])
 
-    # Додаємо кнопку "Назад"
+    # Кнопки навігації
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"catalog:series:{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="Далі ▶️", callback_data=f"catalog:series:{page+1}"))
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
     buttons.append([
         InlineKeyboardButton(text="◀️ Назад", callback_data="catalog:back")
     ])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
+    page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
+
     await callback.message.edit_text(
-        "📺 <b>Серіали:</b>\n\n"
-        "Виберіть серіал:",
+        f"📺 <b>Серіали:</b>\n\nВиберіть серіал:{page_info}",
         reply_markup=keyboard
     )
     await callback.answer()
