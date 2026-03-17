@@ -1514,6 +1514,52 @@ async def cmd_delete_content(message: Message, state: FSMContext):
     await state.set_state(DeleteContentStates.choosing_content_type)
 
 
+async def _show_delete_list(message, content_type: str, items: list, page: int):
+    """Показати сторінку списку контенту для видалення"""
+    ITEMS_PER_PAGE = 15
+    total_pages = (len(items) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start = page * ITEMS_PER_PAGE
+    page_items = items[start:start + ITEMS_PER_PAGE]
+
+    type_config = {
+        "movie":        ("🎬", "delmovie", "фільмів"),
+        "series":       ("📺", "delseries", "серіалів"),
+        "anime_movie":  ("🎌", "delmovie", "аніме-фільмів"),
+        "anime_series": ("🎌", "delseries", "аніме-серіалів"),
+    }
+    emoji, cb_prefix, label = type_config[content_type]
+
+    buttons = []
+    for item in page_items:
+        item_id = str(item["_id"])
+        hidden_emoji = "🔒 " if item.get("is_hidden") else ""
+        year = f" ({item['year']})" if item.get("year") else ""
+        buttons.append([InlineKeyboardButton(
+            text=f"{hidden_emoji}{emoji} {item['title']}{year}",
+            callback_data=f"{cb_prefix}:{item_id}"
+        )])
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"delpage:{content_type}:{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"delpage:{content_type}:{page+1}"))
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data=f"{cb_prefix}:cancel")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    page_info = f" · стор. {page+1}/{total_pages}" if total_pages > 1 else ""
+
+    await message.edit_text(
+        f"{emoji} <b>Виберіть для видалення ({label}: {len(items)}){page_info}:</b>",
+        reply_markup=keyboard
+    )
+
+
 @router.callback_query(DeleteContentStates.choosing_content_type, F.data.startswith("deltype:"))
 async def process_delete_type(callback: CallbackQuery, state: FSMContext):
     """Обробка вибору типу контенту для видалення"""
@@ -1528,143 +1574,41 @@ async def process_delete_type(callback: CallbackQuery, state: FSMContext):
     await state.update_data(delete_content_type=content_type)
 
     if content_type == "movie":
-        # Отримуємо список фільмів (включно з прихованими для адмінів)
-        movies_list = await get_all_movies_list(include_hidden=True)
-
-        if not movies_list:
-            await callback.message.edit_text("❌ Немає фільмів для видалення.")
-            await state.clear()
-            await callback.answer()
-            return
-
-        # Створюємо кнопки для вибору фільму
-        buttons = []
-        for movie in movies_list[:20]:  # Обмежуємо до 20 для уникнення великих меню
-            movie_id = str(movie["_id"])
-            is_hidden = movie.get("is_hidden", False)
-            hidden_emoji = "🔒 " if is_hidden else ""
-            buttons.append([
-                InlineKeyboardButton(
-                    text=f"{hidden_emoji}🎬 {movie['title']} ({movie['year']})",
-                    callback_data=f"delmovie:{movie_id}"
-                )
-            ])
-
-        buttons.append([
-            InlineKeyboardButton(text="❌ Скасувати", callback_data="delmovie:cancel")
-        ])
-        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-        await callback.message.edit_text(
-            "🎬 <b>Виберіть фільм для видалення:</b>\n\n"
-            f"<i>Всього фільмів: {len(movies_list)}</i>",
-            reply_markup=keyboard
-        )
-        await state.set_state(DeleteContentStates.choosing_content)
-
+        items = await get_all_movies_list(include_hidden=True)
     elif content_type == "series":
-        # Отримуємо список серіалів (включно з прихованими для адмінів)
-        series_list = await get_all_series_list(include_hidden=True)
-
-        if not series_list:
-            await callback.message.edit_text("❌ Немає серіалів для видалення.")
-            await state.clear()
-            await callback.answer()
-            return
-
-        # Створюємо кнопки для вибору серіалу
-        buttons = []
-        for series in series_list[:20]:
-            series_id = str(series["_id"])
-            is_hidden = series.get("is_hidden", False)
-            hidden_emoji = "🔒 " if is_hidden else ""
-            buttons.append([
-                InlineKeyboardButton(
-                    text=f"{hidden_emoji}📺 {series['title']}",
-                    callback_data=f"delseries:{series_id}"
-                )
-            ])
-
-        buttons.append([
-            InlineKeyboardButton(text="❌ Скасувати", callback_data="delseries:cancel")
-        ])
-        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-        await callback.message.edit_text(
-            "📺 <b>Виберіть серіал:</b>",
-            reply_markup=keyboard
-        )
-        await state.set_state(DeleteContentStates.choosing_content)
-
+        items = await get_all_series_list(include_hidden=True)
     elif content_type == "anime_movie":
-        # Отримуємо список аніме-фільмів (включно з прихованими для адмінів)
-        movies_list = await get_all_anime_movies_list(include_hidden=True)
+        items = await get_all_anime_movies_list(include_hidden=True)
+    else:  # anime_series
+        items = await get_all_anime_series_list(include_hidden=True)
 
-        if not movies_list:
-            await callback.message.edit_text("❌ Немає аніме-фільмів для видалення.")
-            await state.clear()
-            await callback.answer()
-            return
+    if not items:
+        await callback.message.edit_text("❌ Немає контенту для видалення.")
+        await state.clear()
+        await callback.answer()
+        return
 
-        # Створюємо кнопки для вибору фільму
-        buttons = []
-        for movie in movies_list[:20]:
-            movie_id = str(movie["_id"])
-            is_hidden = movie.get("is_hidden", False)
-            hidden_emoji = "🔒 " if is_hidden else ""
-            buttons.append([
-                InlineKeyboardButton(
-                    text=f"{hidden_emoji}🎌 {movie['title']} ({movie.get('year', '?')})",
-                    callback_data=f"delmovie:{movie_id}"
-                )
-            ])
+    await _show_delete_list(callback.message, content_type, items, page=0)
+    await state.set_state(DeleteContentStates.choosing_content)
+    await callback.answer()
 
-        buttons.append([
-            InlineKeyboardButton(text="❌ Скасувати", callback_data="delmovie:cancel")
-        ])
-        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-        await callback.message.edit_text(
-            "🎌 <b>Виберіть аніме-фільм для видалення:</b>\n\n"
-            f"<i>Всього аніме-фільмів: {len(movies_list)}</i>",
-            reply_markup=keyboard
-        )
-        await state.set_state(DeleteContentStates.choosing_content)
+@router.callback_query(DeleteContentStates.choosing_content, F.data.startswith("delpage:"))
+async def navigate_delete_pages(callback: CallbackQuery, state: FSMContext):
+    """Навігація по сторінках при видаленні"""
+    _, content_type, page_str = callback.data.split(":")
+    page = int(page_str)
 
-    elif content_type == "anime_series":
-        # Отримуємо список аніме-серіалів (включно з прихованими для адмінів)
-        series_list = await get_all_anime_series_list(include_hidden=True)
+    if content_type == "movie":
+        items = await get_all_movies_list(include_hidden=True)
+    elif content_type == "series":
+        items = await get_all_series_list(include_hidden=True)
+    elif content_type == "anime_movie":
+        items = await get_all_anime_movies_list(include_hidden=True)
+    else:
+        items = await get_all_anime_series_list(include_hidden=True)
 
-        if not series_list:
-            await callback.message.edit_text("❌ Немає аніме-серіалів для видалення.")
-            await state.clear()
-            await callback.answer()
-            return
-
-        # Створюємо кнопки для вибору серіалу
-        buttons = []
-        for series in series_list[:20]:
-            series_id = str(series["_id"])
-            is_hidden = series.get("is_hidden", False)
-            hidden_emoji = "🔒 " if is_hidden else ""
-            buttons.append([
-                InlineKeyboardButton(
-                    text=f"{hidden_emoji}🎌 {series['title']}",
-                    callback_data=f"delseries:{series_id}"
-                )
-            ])
-
-        buttons.append([
-            InlineKeyboardButton(text="❌ Скасувати", callback_data="delseries:cancel")
-        ])
-        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-        await callback.message.edit_text(
-            "🎌 <b>Виберіть аніме-серіал:</b>",
-            reply_markup=keyboard
-        )
-        await state.set_state(DeleteContentStates.choosing_content)
-
+    await _show_delete_list(callback.message, content_type, items, page=page)
     await callback.answer()
 
 
