@@ -1235,7 +1235,7 @@ async def process_super_new_series_poster(message: Message, state: FSMContext):
 
     # Створюємо новий серіал
     try:
-        series_id = await create_series(
+        series = await create_series(
             title=data["new_series_title"],
             title_en=data["new_series_title_en"],
             year=data["new_series_year"],
@@ -1244,9 +1244,11 @@ async def process_super_new_series_poster(message: Message, state: FSMContext):
             added_by=message.from_user.id
         )
 
+        series_id = str(series["_id"])
+
         # Зберігаємо ID серіалу
         await state.update_data(
-            series_id=str(series_id),
+            series_id=series_id,
             title=data["new_series_title"],
             received_videos={}
         )
