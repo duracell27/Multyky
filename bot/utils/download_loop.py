@@ -109,6 +109,7 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
                 config.STORAGE_CHANNEL_ID,
                 video=FSInputFile(output_path),
                 caption=caption,
+                supports_streaming=True,
             )
             file_id = sent.video.file_id
             file_size = sent.video.file_size or 0
@@ -136,11 +137,14 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
 
         except Exception as e:
             logger.error(f"Job {job_id} episode {ep_num} failed: {e}")
-            await bot.send_message(
-                admin_id,
-                f"⚠️ Помилка на S{season}E{ep_num}: {str(e)[:200]}\n"
-                f"Продовжую з наступною серією..."
-            )
+            try:
+                await bot.send_message(
+                    admin_id,
+                    f"⚠️ Помилка на S{season}E{ep_num}: {str(e)[:200]}\n"
+                    f"Продовжую з наступною серією..."
+                )
+            except Exception:
+                pass
         finally:
             if await asyncio.to_thread(os.path.exists, output_path):
                 await asyncio.to_thread(os.remove, output_path)
