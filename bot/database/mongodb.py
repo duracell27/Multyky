@@ -60,6 +60,11 @@ class MongoDB:
         """Колекція запланованих постів в канал"""
         return self.db.scheduled_posts
 
+    @property
+    def auto_download_jobs(self):
+        """Колекція завдань автозавантаження"""
+        return self.db.auto_download_jobs
+
 
 # Глобальний екземпляр
 db = MongoDB()
