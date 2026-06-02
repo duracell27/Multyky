@@ -124,3 +124,21 @@ class PostToChannelStates(StatesGroup):
     waiting_for_caption = State()  # Чекаємо текст посту від адміна
     confirming_post = State()       # Підтвердження: зараз чи запланувати
     waiting_for_schedule_time = State()  # Чекаємо дату/час публікації
+
+
+class AutoDownloadStates(StatesGroup):
+    """Стани для автоматичного завантаження серій"""
+    choosing_series_type = State()       # новий серіал чи існуючий?
+    # гілка нового серіалу
+    waiting_for_new_series_title = State()
+    waiting_for_new_series_title_en = State()
+    waiting_for_new_series_year = State()
+    waiting_for_new_series_imdb = State()
+    waiting_for_new_series_poster = State()
+    # спільні кроки
+    choosing_existing_series = State()
+    waiting_for_season = State()
+    waiting_for_url = State()
+    choosing_dubbing = State()
+    confirming = State()
+    downloading = State()
