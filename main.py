@@ -97,12 +97,13 @@ def start_local_bot_api() -> subprocess.Popen:
             f"--api-hash={config.TELEGRAM_API_HASH}",
             "--local",
             "--http-port=8082",
+            "--dir=/tmp/telegram-bot-api-data",
             "--log=/tmp/telegram-bot-api.log",
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    time.sleep(3)  # чекаємо поки сервер підніметься
+    time.sleep(5)  # чекаємо поки сервер підніметься
     logging.info("✅ Telegram Bot API Local Server запущено (pid=%d)", proc.pid)
     return proc
 
