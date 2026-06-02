@@ -14,10 +14,10 @@ from bot.database.movies import (
     create_series
 )
 from bot.database.auto_download_jobs import (
-    create_job, get_paused_jobs_for_admin, set_job_status, get_job
+    create_job, set_job_status, get_job
 )
 from bot.utils.scraper import get_dubbing_options, parse_season_page
-from bot.utils.download_loop import start_job, cancel_job, is_job_running
+from bot.utils.download_loop import start_job, cancel_job
 from bot.handlers.admin import get_forwarded_chat_id
 
 router = Router()
