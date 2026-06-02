@@ -96,6 +96,7 @@ def start_local_bot_api() -> subprocess.Popen:
             f"--api-id={config.TELEGRAM_API_ID}",
             f"--api-hash={config.TELEGRAM_API_HASH}",
             "--local",
+            "--http-port=8082",
             "--log=/tmp/telegram-bot-api.log",
         ],
         stdout=subprocess.DEVNULL,
@@ -126,7 +127,7 @@ async def main():
 
     # Ініціалізація бота через локальний сервер (знімає ліміт 50MB)
     session = AiohttpSession(
-        api=TelegramAPIServer.from_base("http://localhost:8081", is_local=True)
+        api=TelegramAPIServer.from_base("http://localhost:8082", is_local=True)
     )
     bot = Bot(
         token=config.BOT_TOKEN,
