@@ -1,7 +1,11 @@
 import asyncio
 import logging
+import subprocess
+import time
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -84,6 +88,24 @@ async def resume_unfinished_jobs(bot: Bot):
             logging.error(f"Could not notify admin {admin_id} about job {job_id}: {e}")
 
 
+def start_local_bot_api() -> subprocess.Popen:
+    """Запускає Telegram Bot API Local Server як дочірній процес."""
+    proc = subprocess.Popen(
+        [
+            "/Users/Apple/telegram-bot-api/build/telegram-bot-api",
+            f"--api-id={config.TELEGRAM_API_ID}",
+            f"--api-hash={config.TELEGRAM_API_HASH}",
+            "--local",
+            "--log=/tmp/telegram-bot-api.log",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    time.sleep(3)  # чекаємо поки сервер підніметься
+    logging.info("✅ Telegram Bot API Local Server запущено (pid=%d)", proc.pid)
+    return proc
+
+
 async def main():
     """Головна функція для запуску бота"""
 
@@ -99,9 +121,16 @@ async def main():
     # Виводимо список адмінів для перевірки
     logging.info(f"👑 Admin IDs: {config.ADMIN_IDS}")
 
-    # Ініціалізація бота
+    # Запускаємо локальний Bot API сервер
+    local_api_proc = start_local_bot_api()
+
+    # Ініціалізація бота через локальний сервер (знімає ліміт 50MB)
+    session = AiohttpSession(
+        api=TelegramAPIServer.from_base("http://localhost:8081", is_local=True)
+    )
     bot = Bot(
         token=config.BOT_TOKEN,
+        session=session,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     dp = Dispatcher()
@@ -188,6 +217,8 @@ async def main():
         scheduler.shutdown()
         await db.close()
         await bot.session.close()
+        local_api_proc.terminate()
+        logging.info("✅ Telegram Bot API Local Server зупинено")
 
 
 if __name__ == "__main__":

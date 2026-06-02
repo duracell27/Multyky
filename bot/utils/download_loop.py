@@ -4,6 +4,7 @@ import os
 import shutil
 
 from aiogram import Bot
+from aiogram.types import FSInputFile
 
 from bot.config import config
 from bot.database.auto_download_jobs import (
@@ -12,7 +13,6 @@ from bot.database.auto_download_jobs import (
 from bot.database.movies import add_episode_to_series
 from bot.utils.ffmpeg_runner import run_ffmpeg
 from bot.utils.scraper import get_m3u8_url
-from bot.utils.telegram_uploader import upload_video_to_channel
 
 logger = logging.getLogger(__name__)
 
@@ -98,28 +98,21 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
             # 2. Download + remux
             await run_ffmpeg(m3u8_url, output_path)
 
-            # 3. Upload to storage channel via Telethon (no 50MB limit)
+            # 3. Upload to storage channel (local Bot API server — no size limit)
             caption = (
                 f"id:{series_id}\n"
                 f"season:{season}\n"
                 f"episode:{ep_num}\n"
                 f"name:{series_title}"
             )
-            msg_id = await upload_video_to_channel(
+            sent = await bot.send_video(
                 config.STORAGE_CHANNEL_ID,
-                output_path,
-                caption,
+                video=FSInputFile(output_path),
+                caption=caption,
             )
-
-            # 4a. Forward via bot to get file_id usable by the bot
-            forwarded = await bot.forward_message(
-                chat_id=admin_id,
-                from_chat_id=config.STORAGE_CHANNEL_ID,
-                message_id=msg_id,
-            )
-            file_id = forwarded.video.file_id
-            file_size = forwarded.video.file_size or 0
-            duration = forwarded.video.duration or 0
+            file_id = sent.video.file_id
+            file_size = sent.video.file_size or 0
+            duration = sent.video.duration or 0
 
             # 4. Add to database
             await add_episode_to_series(
