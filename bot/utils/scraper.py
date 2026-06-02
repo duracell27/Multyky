@@ -171,7 +171,7 @@ def _sync_parse_season_page(url: str, dubbing: str) -> dict:
         if target_id:
             episode_urls = [ep["file"] for ep in episodes if ep["data_id"] == target_id]
 
-    if not episode_urls and dubbing not in (parsed["dubbing_ids"] or {}):
+    if not episode_urls and dubbing not in parsed["dubbing_ids"]:
         raise ValueError(
             f"Dubbing {dubbing!r} not found. Available: {dubbings}"
         )
