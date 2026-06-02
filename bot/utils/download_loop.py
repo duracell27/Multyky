@@ -30,6 +30,7 @@ async def start_job(bot: Bot, job_id: str) -> None:
         return
     task = asyncio.create_task(_run_loop(bot, job_id))
     _active_tasks[job_id] = task
+    task.add_done_callback(lambda _: _active_tasks.pop(job_id, None))
 
 
 async def cancel_job(job_id: str) -> None:
@@ -38,7 +39,7 @@ async def cancel_job(job_id: str) -> None:
 
 
 async def _check_disk(min_gb: float = 1.0) -> bool:
-    usage = shutil.disk_usage("/tmp")
+    usage = await asyncio.to_thread(shutil.disk_usage, "/tmp")
     free_gb = usage.free / (1024 ** 3)
     return free_gb >= min_gb
 
@@ -132,8 +133,8 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
                 f"Продовжую з наступною серією..."
             )
         finally:
-            if os.path.exists(output_path):
-                os.remove(output_path)
+            if await asyncio.to_thread(os.path.exists, output_path):
+                await asyncio.to_thread(os.remove, output_path)
 
     await set_job_status(job_id, "done")
     await bot.send_message(
