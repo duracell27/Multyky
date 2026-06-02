@@ -5,28 +5,22 @@ import os
 async def run_ffmpeg(m3u8_url: str, output_path: str) -> None:
     """
     Downloads m3u8 stream and produces a faststart-enabled mp4.
-    Two-step process: download → apply faststart (ensures seekable playback).
+    Two-step: download (copy) → apply faststart for instant Telegram playback.
     Raises RuntimeError if ffmpeg exits with non-zero code or times out.
     """
     raw_path = output_path + ".raw.mp4"
 
     try:
-        # Step 1: download from m3u8 (copy streams, no transcoding yet)
+        # Step 1: download from m3u8
         await _run_cmd(
             ["ffmpeg", "-y", "-i", m3u8_url, "-c", "copy", raw_path],
             timeout=300,
         )
 
-        # Step 2: transcode to H.264 + faststart for Telegram streaming compatibility
+        # Step 2: apply faststart (moves moov atom to front for instant playback)
         await _run_cmd(
-            [
-                "ffmpeg", "-y", "-i", raw_path,
-                "-c:v", "libx264", "-crf", "23", "-preset", "fast",
-                "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "+faststart",
-                output_path,
-            ],
-            timeout=600,
+            ["ffmpeg", "-y", "-i", raw_path, "-c", "copy", "-movflags", "+faststart", output_path],
+            timeout=120,
         )
     finally:
         if os.path.exists(raw_path):
