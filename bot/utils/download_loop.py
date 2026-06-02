@@ -4,6 +4,7 @@ import os
 import shutil
 
 from aiogram import Bot
+from aiogram.types import FSInputFile
 
 from bot.config import config
 from bot.database.auto_download_jobs import (
@@ -104,10 +105,9 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
                 f"episode:{ep_num}\n"
                 f"name:{series_title}"
             )
-            with open(output_path, "rb") as video_file:
-                sent = await bot.send_video(
+            sent = await bot.send_video(
                     config.STORAGE_CHANNEL_ID,
-                    video=video_file,
+                    video=FSInputFile(output_path),
                     caption=caption,
                 )
             file_id = sent.video.file_id
