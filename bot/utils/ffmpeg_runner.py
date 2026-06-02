@@ -11,16 +11,22 @@ async def run_ffmpeg(m3u8_url: str, output_path: str) -> None:
     raw_path = output_path + ".raw.mp4"
 
     try:
-        # Step 1: download from m3u8
+        # Step 1: download from m3u8 (copy streams, no transcoding yet)
         await _run_cmd(
             ["ffmpeg", "-y", "-i", m3u8_url, "-c", "copy", raw_path],
             timeout=300,
         )
 
-        # Step 2: apply faststart (moves moov atom to front for instant playback)
+        # Step 2: transcode to H.264 + faststart for Telegram streaming compatibility
         await _run_cmd(
-            ["ffmpeg", "-y", "-i", raw_path, "-c", "copy", "-movflags", "+faststart", output_path],
-            timeout=120,
+            [
+                "ffmpeg", "-y", "-i", raw_path,
+                "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                output_path,
+            ],
+            timeout=600,
         )
     finally:
         if os.path.exists(raw_path):
