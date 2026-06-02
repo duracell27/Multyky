@@ -1,5 +1,4 @@
 import asyncio
-import os
 
 
 async def run_ffmpeg(m3u8_url: str, output_path: str) -> None:
@@ -24,5 +23,5 @@ async def run_ffmpeg(m3u8_url: str, output_path: str) -> None:
 
     if proc.returncode != 0:
         raise RuntimeError(
-            f"ffmpeg failed (code {proc.returncode}): {stderr.decode()[-500:]}"
+            f"ffmpeg failed (code {proc.returncode}): {stderr.decode(errors='replace')[-500:]}"
         )

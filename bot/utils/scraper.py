@@ -146,18 +146,16 @@ def _parse_playlist_html(html: str) -> dict:
     }
 
 
-def _sync_get_dubbing_options(url: str) -> list[str]:
-    html = _get_playlist_html(url)
-    parsed = _parse_playlist_html(html)
-    return parsed["dubbings"]
-
-
 def _sync_parse_season_page(url: str, dubbing: str) -> dict:
     html = _get_playlist_html(url)
     parsed = _parse_playlist_html(html)
 
     dubbings = parsed["dubbings"]
     episodes = parsed["episodes"]
+
+    # Empty dubbing string means caller only wants the dubbings list (no episode filtering).
+    if not dubbing:
+        return {"dubbings": dubbings, "episode_urls": []}
 
     # Match episodes for the requested dubbing
     # Strategy: match by data-voice field (exact), then fallback to dubbing_ids
@@ -176,6 +174,12 @@ def _sync_parse_season_page(url: str, dubbing: str) -> dict:
     if not episode_urls and dubbing not in (parsed["dubbing_ids"] or {}):
         raise ValueError(
             f"Dubbing {dubbing!r} not found. Available: {dubbings}"
+        )
+
+    if not episode_urls:
+        raise ValueError(
+            f"Dubbing '{dubbing}' found on page but returned 0 episodes. "
+            f"Available dubbings: {dubbings}"
         )
 
     return {"dubbings": dubbings, "episode_urls": episode_urls}
@@ -206,21 +210,26 @@ def _sync_get_m3u8_url(episode_url: str) -> str:
 # ---------------------------------------------------------------------------
 
 async def get_dubbing_options(url: str) -> list[str]:
-    """Return the list of dubbing names available on the season page."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, partial(_sync_get_dubbing_options, url))
+    """Return the list of dubbing names available on the season page.
+
+    Delegates to parse_season_page with an empty dubbing to avoid a
+    redundant HTTP round-trip when the caller later calls parse_season_page.
+    """
+    result = await parse_season_page(url, dubbing="")
+    return result["dubbings"]
 
 
 async def parse_season_page(url: str, dubbing: str) -> dict:
     """
     Return {"dubbings": [str], "episode_urls": [str]}.
     episode_urls are ordered episode player URLs for the chosen dubbing.
+    Pass dubbing="" to retrieve only the dubbings list without episode filtering.
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, partial(_sync_parse_season_page, url, dubbing))
 
 
 async def get_m3u8_url(episode_url: str) -> str:
     """Fetch the episode player page and extract the HLS m3u8 URL."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, partial(_sync_get_m3u8_url, episode_url))
