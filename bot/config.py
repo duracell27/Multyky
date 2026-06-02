@@ -28,6 +28,10 @@ class Config:
     # Канал для новин (постинг фільмів)
     NEWS_CHANNEL_ID = os.getenv("NEWS_CHANNEL_ID", "")
 
+    # Telethon (для завантаження великих файлів)
+    TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
+    TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "")
+
     @classmethod
     def validate(cls):
         """Перевірка наявності обов'язкових налаштувань"""
