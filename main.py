@@ -8,7 +8,8 @@ from apscheduler.triggers.cron import CronTrigger
 
 from bot.config import config
 from bot.database import db
-from bot.handlers import common_router, admin_router, catalog_router, broadcast_router
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from bot.handlers import common_router, admin_router, catalog_router, broadcast_router, auto_download_router
 from bot.database.users import send_daily_registration_report
 from bot.database.broadcasts import get_scheduled_broadcasts
 from bot.handlers.broadcast import send_broadcast_to_users
@@ -47,6 +48,42 @@ async def check_and_send_scheduled_broadcasts(bot: Bot):
             logging.error(f"Помилка при відправці розсилки {broadcast_id}: {e}")
 
 
+async def resume_unfinished_jobs(bot: Bot):
+    """On startup, notify admins about unfinished download jobs."""
+    from bot.database.auto_download_jobs import get_running_jobs, set_job_status
+
+    running = await get_running_jobs()
+    for job in running:
+        job_id = str(job["_id"])
+        admin_id = job["admin_id"]
+        ep = job["current_episode"]
+        total = job["total_episodes"]
+        title = job["series_title"]
+
+        buttons = [[
+            InlineKeyboardButton(
+                text="▶️ Продовжити",
+                callback_data=f"ad_resume:{job_id}"
+            ),
+            InlineKeyboardButton(
+                text="❌ Скасувати",
+                callback_data=f"ad_resume_cancel:{job_id}"
+            ),
+        ]]
+        try:
+            await bot.send_message(
+                admin_id,
+                f"⚠️ Знайдено незакінчене завантаження:\n\n"
+                f"📺 {title}, сезон {job['season']}\n"
+                f"Прогрес: {ep}/{total} серій\n\n"
+                f"Продовжити?",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+            )
+            await set_job_status(job_id, "paused")
+        except Exception as e:
+            logging.error(f"Could not notify admin {admin_id} about job {job_id}: {e}")
+
+
 async def main():
     """Головна функція для запуску бота"""
 
@@ -74,9 +111,11 @@ async def main():
     dp.include_router(admin_router)
     dp.include_router(catalog_router)
     dp.include_router(broadcast_router)
+    dp.include_router(auto_download_router)
 
     # Підключення до бази даних
     await db.connect()
+    await resume_unfinished_jobs(bot)
 
     # Налаштування scheduler для щоденних звітів
     scheduler = AsyncIOScheduler()
