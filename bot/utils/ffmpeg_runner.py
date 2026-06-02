@@ -4,7 +4,7 @@ import asyncio
 async def run_ffmpeg(m3u8_url: str, output_path: str) -> None:
     """
     Downloads and remuxes an m3u8 stream to output_path using ffmpeg.
-    Raises RuntimeError if ffmpeg exits with non-zero code.
+    Raises RuntimeError if ffmpeg exits with non-zero code or times out.
     """
     cmd = [
         "ffmpeg", "-y",
@@ -19,7 +19,13 @@ async def run_ffmpeg(m3u8_url: str, output_path: str) -> None:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    _, stderr = await proc.communicate()
+
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise RuntimeError("ffmpeg timed out after 300 seconds")
 
     if proc.returncode != 0:
         raise RuntimeError(

@@ -141,4 +141,3 @@ class AutoDownloadStates(StatesGroup):
     waiting_for_url = State()
     choosing_dubbing = State()
     confirming = State()
-    downloading = State()

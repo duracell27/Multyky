@@ -67,6 +67,15 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
         return
 
     for idx in range(start_from, total):
+        # Check disk space before each episode
+        if not await _check_disk():
+            await bot.send_message(
+                admin_id,
+                "❌ Менше 1GB вільного місця на диску. Завантаження зупинено."
+            )
+            await set_job_status(job_id, "error")
+            return
+
         # Check for cancellation before each episode
         fresh_job = await get_job(job_id)
         if fresh_job and fresh_job["status"] == "paused":

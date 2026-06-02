@@ -392,7 +392,11 @@ async def handle_resume(callback: CallbackQuery, bot: Bot):
         await callback.answer("⛔️", show_alert=True)
         return
     job_id = callback.data.split(":", 1)[1]
-    job = await get_job(job_id)
+    try:
+        job = await get_job(job_id)
+    except Exception:
+        await callback.answer("Завдання не знайдено", show_alert=True)
+        return
     if not job:
         await callback.answer("Завдання не знайдено", show_alert=True)
         return
@@ -411,6 +415,10 @@ async def handle_resume_cancel(callback: CallbackQuery):
         await callback.answer("⛔️", show_alert=True)
         return
     job_id = callback.data.split(":", 1)[1]
-    await set_job_status(job_id, "paused")
+    try:
+        await set_job_status(job_id, "paused")
+    except Exception:
+        await callback.answer("Помилка", show_alert=True)
+        return
     await callback.message.edit_text("❌ Завантаження скасовано.")
     await callback.answer()
