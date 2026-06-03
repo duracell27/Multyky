@@ -3,11 +3,15 @@ import json
 import math
 import os
 
+_TELEGRAM_SIZE_LIMIT = 1_900_000_000  # 1.9 GB — safe margin under Telegram's 2 GB cap
+_AUDIO_BITRATE_BPS = 192_000          # reserved for audio track
 
-async def run_ffmpeg(m3u8_url: str, output_path: str) -> None:
+
+async def run_ffmpeg(m3u8_url: str, output_path: str) -> bool:
     """
     Downloads m3u8 stream and produces a faststart-enabled mp4.
-    Two-step: download (copy) → apply faststart for instant Telegram playback.
+    Steps: download (copy) → faststart → compress if > 1.9 GB.
+    Returns True if the file was re-encoded due to size, False otherwise.
     Raises RuntimeError if ffmpeg exits with non-zero code or times out.
     """
     raw_path = output_path + ".raw.mp4"
@@ -16,17 +20,55 @@ async def run_ffmpeg(m3u8_url: str, output_path: str) -> None:
         # Step 1: download from m3u8
         await _run_cmd(
             ["ffmpeg", "-y", "-i", m3u8_url, "-c", "copy", raw_path],
-            timeout=300,
+            timeout=7200,
         )
 
         # Step 2: apply faststart (moves moov atom to front for instant playback)
         await _run_cmd(
             ["ffmpeg", "-y", "-i", raw_path, "-c", "copy", "-movflags", "+faststart", output_path],
-            timeout=120,
+            timeout=600,
         )
     finally:
         if os.path.exists(raw_path):
             os.remove(raw_path)
+
+    # Step 3: re-encode if file exceeds Telegram's upload limit
+    if os.path.getsize(output_path) > _TELEGRAM_SIZE_LIMIT:
+        await _compress_to_limit(output_path)
+        return True
+    return False
+
+
+async def _compress_to_limit(path: str) -> None:
+    """Re-encode file to fit under _TELEGRAM_SIZE_LIMIT using calculated video bitrate."""
+    duration, _, _ = await get_video_info(path)
+    if not duration:
+        raise RuntimeError("Cannot determine video duration for compression")
+
+    # target total bitrate in bps, subtract audio
+    target_video_bps = int(_TELEGRAM_SIZE_LIMIT * 8 / duration) - _AUDIO_BITRATE_BPS
+    if target_video_bps <= 0:
+        raise RuntimeError(
+            f"File is too long ({duration}s) to fit under "
+            f"{_TELEGRAM_SIZE_LIMIT // 1_000_000} MB even at minimum bitrate"
+        )
+
+    compressed_path = path + ".compressed.mp4"
+    try:
+        await _run_cmd(
+            [
+                "ffmpeg", "-y", "-i", path,
+                "-c:v", "libx264", "-b:v", str(target_video_bps),
+                "-c:a", "aac", "-b:a", str(_AUDIO_BITRATE_BPS),
+                "-movflags", "+faststart",
+                compressed_path,
+            ],
+            timeout=7200,
+        )
+        os.replace(compressed_path, path)
+    finally:
+        if os.path.exists(compressed_path):
+            os.remove(compressed_path)
 
 
 async def get_video_info(path: str) -> tuple[int, int, int]:

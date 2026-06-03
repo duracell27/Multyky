@@ -10,7 +10,7 @@ from bot.config import config
 from bot.database.auto_download_jobs import (
     get_job, update_job_progress, set_job_status
 )
-from bot.database.movies import add_episode_to_series
+from bot.database.movies import add_episode_to_series, get_episode
 from bot.utils.ffmpeg_runner import run_ffmpeg, get_video_info, create_thumbnail
 from bot.utils.scraper import get_m3u8_url
 
@@ -91,13 +91,27 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
         ep_num = idx + 1
         output_path = f"/tmp/{job_id}_e{ep_num}.mp4"
 
+        # Skip episodes that are already in the database
+        if await get_episode(series_id, season, ep_num):
+            await update_job_progress(job_id, idx + 1)
+            await bot.send_message(
+                admin_id,
+                f"⏭ S{season}E{ep_num} вже є в базі, пропускаю ({ep_num}/{total})"
+            )
+            continue
+
         thumb_path = output_path + ".thumb.jpg"
         try:
             # 1. Get m3u8
             m3u8_url = await get_m3u8_url(episode_url)
 
-            # 2. Download + remux with faststart
-            await run_ffmpeg(m3u8_url, output_path)
+            # 2. Download + remux with faststart (auto-compresses if > 1.9 GB)
+            was_compressed = await run_ffmpeg(m3u8_url, output_path)
+            if was_compressed:
+                await bot.send_message(
+                    admin_id,
+                    f"⚠️ S{season}E{ep_num}: файл перевищував 1.9 ГБ — перекодовано для Telegram."
+                )
 
             # 3. Get video metadata and thumbnail
             duration, width, height = await get_video_info(output_path)

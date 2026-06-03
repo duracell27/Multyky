@@ -15,7 +15,7 @@ from aiogram.types import FSInputFile
 from bot.config import config
 from bot.states import AutoMovieStates
 from bot.database.movies import (
-    create_movie, get_all_movie_series_names
+    create_movie, get_all_movie_series_names, find_movie_by_titles
 )
 from bot.utils.scraper import parse_movie_page, download_poster, get_movie_m3u8
 from bot.utils.ffmpeg_runner import run_ffmpeg, get_video_info, create_thumbnail
@@ -200,10 +200,62 @@ async def process_imdb_manual(message: Message, state: FSMContext):
     await _handle_manual_field(message, state, "imdb", imdb)
 
 
+# ── Дублікат ──────────────────────────────────────────────────────────────────
+
+@router.callback_query(AutoMovieStates.confirming_duplicate, F.data.startswith("am_dup:"))
+async def process_duplicate_choice(callback: CallbackQuery, state: FSMContext):
+    choice = callback.data.split(":")[1]
+    if choice == "cancel":
+        await callback.message.edit_text("❌ Скасовано.")
+        await state.clear()
+        await callback.answer()
+        return
+    # continue — skip duplicate check and go straight to dubbing picker
+    data = await state.get_data()
+    dubbings = data.get("available_dubbings", [])
+    if not dubbings:
+        await callback.message.edit_text("🎙 Озвучок не знайдено. Введіть назву озвучки вручну:")
+        await state.set_state(AutoMovieStates.choosing_dubbing)
+    else:
+        buttons = [
+            [InlineKeyboardButton(text=d, callback_data=f"am_dub:{i}")]
+            for i, d in enumerate(dubbings)
+        ]
+        await callback.message.edit_text(
+            "🎙 Оберіть озвучку:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+        await state.set_state(AutoMovieStates.choosing_dubbing)
+    await callback.answer()
+
+
 # ── Вибір озвучки ─────────────────────────────────────────────────────────────
 
 async def _show_dubbing_picker(message, state: FSMContext, edit: bool = False):
     data = await state.get_data()
+
+    existing = await find_movie_by_titles(data.get("title"), data.get("title_en"))
+    if existing:
+        movie_id = str(existing["_id"])
+        warn_text = (
+            f"⚠️ <b>Фільм вже є в базі!</b>\n\n"
+            f"🎬 {existing.get('title')}"
+            + (f" / {existing.get('title_en')}" if existing.get("title_en") else "")
+            + f"\n📅 {existing.get('year')} · ⭐️ {existing.get('imdb_rating')}\n"
+            f"🆔 <code>{movie_id}</code>\n\n"
+            f"Продовжити все одно?"
+        )
+        buttons = [
+            [InlineKeyboardButton(text="▶️ Продовжити", callback_data="am_dup:continue")],
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="am_dup:cancel")],
+        ]
+        if edit:
+            await message.edit_text(warn_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        else:
+            await message.answer(warn_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        await state.set_state(AutoMovieStates.confirming_duplicate)
+        return
+
     dubbings = data.get("available_dubbings", [])
 
     if not dubbings:
@@ -476,7 +528,12 @@ async def _download_and_create_movie(
         m3u8_url = await get_movie_m3u8(url, dubbing)
 
         await bot.send_message(admin_id, "⏳ Завантажую відео (це може зайняти кілька хвилин)...")
-        await run_ffmpeg(m3u8_url, video_path)
+        was_compressed = await run_ffmpeg(m3u8_url, video_path)
+        if was_compressed:
+            await bot.send_message(
+                admin_id,
+                "⚠️ Файл перевищував 1.9 ГБ — перекодовано для Telegram."
+            )
 
         # 3. Get metadata and thumbnail
         duration, width, height = await get_video_info(video_path)

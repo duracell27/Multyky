@@ -131,7 +131,8 @@ async def main():
 
     # Ініціалізація бота через локальний сервер (знімає ліміт 50MB)
     session = AiohttpSession(
-        api=TelegramAPIServer.from_base("http://localhost:8082", is_local=True)
+        api=TelegramAPIServer.from_base("http://localhost:8082", is_local=True),
+        timeout=7200,  # 2h — large movie uploads can take a while
     )
     bot = Bot(
         token=config.BOT_TOKEN,

@@ -188,10 +188,51 @@ def _sync_parse_season_page(url: str, dubbing: str) -> dict:
     return {"dubbings": dubbings, "episode_urls": episode_urls}
 
 
+def _resolve_best_quality_m3u8(master_url: str) -> str:
+    """
+    If master_url is an HLS master playlist, return the variant URL with the
+    highest BANDWIDTH value. Otherwise return master_url unchanged.
+    """
+    try:
+        resp = _fetch(master_url)
+        content = resp.text
+    except Exception:
+        return master_url
+
+    if "#EXT-X-STREAM-INF" not in content:
+        return master_url  # already a media playlist, not a master
+
+    best_bw = -1
+    best_url = None
+    lines = content.splitlines()
+    base = master_url.rsplit("/", 1)[0]
+
+    for i, line in enumerate(lines):
+        if not line.startswith("#EXT-X-STREAM-INF"):
+            continue
+        bw_match = re.search(r"BANDWIDTH=(\d+)", line)
+        if not bw_match:
+            continue
+        bw = int(bw_match.group(1))
+        if bw > best_bw and i + 1 < len(lines):
+            variant = lines[i + 1].strip()
+            if variant and not variant.startswith("#"):
+                if not variant.startswith("http"):
+                    variant = base + "/" + variant
+                best_bw = bw
+                best_url = variant
+
+    if best_url:
+        logger.info(f"Selected best quality variant (bandwidth={best_bw}): {best_url}")
+        return best_url
+    return master_url
+
+
 def _sync_get_m3u8_url(episode_url: str) -> str:
     """
     Fetch an ashdi.vip episode page and extract the m3u8 URL from the
     Playerjs({..., file:'<url>.m3u8', ...}) script block.
+    Resolves master playlists to the highest-bandwidth variant.
     """
     resp = _fetch(episode_url, referer="https://uakino.best/")
     text = resp.text
@@ -204,8 +245,8 @@ def _sync_get_m3u8_url(episode_url: str) -> str:
     if not m3u8_match:
         raise ValueError(f"No m3u8 URL found on episode page: {episode_url}")
 
-    url = m3u8_match.group(1)
-    return _make_absolute(url)
+    url = _make_absolute(m3u8_match.group(1))
+    return _resolve_best_quality_m3u8(url)
 
 
 def _sync_parse_movie_page(url: str) -> dict:

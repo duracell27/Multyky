@@ -158,5 +158,7 @@ class AutoMovieStates(StatesGroup):
     choosing_existing_series = State()
     waiting_for_new_series_name = State()
     waiting_for_part_number = State()
+    # перевірка дубліката
+    confirming_duplicate = State()
     # підтвердження і завантаження
     confirming_download = State()

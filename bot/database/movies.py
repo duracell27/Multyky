@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timezone
 from typing import Optional
 from bot.database import db
@@ -132,6 +133,21 @@ async def get_movie_by_id(movie_id: str) -> Optional[dict]:
 async def get_movie_by_title(title: str) -> Optional[dict]:
     """Отримати мультфільм/серіал за назвою"""
     return await db.videos.find_one({"title": title})
+
+
+async def find_movie_by_titles(title: str | None, title_en: str | None) -> Optional[dict]:
+    """Case-insensitive search by Ukrainian or English title (movies only)."""
+    conditions = []
+    if title:
+        conditions.append({"title": {"$regex": f"^{re.escape(title)}$", "$options": "i"}})
+    if title_en:
+        conditions.append({"title_en": {"$regex": f"^{re.escape(title_en)}$", "$options": "i"}})
+    if not conditions:
+        return None
+    return await db.videos.find_one({
+        "$or": conditions,
+        "content_type": "movie",
+    })
 
 
 async def get_all_movies() -> list:
