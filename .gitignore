@@ -25,3 +25,7 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Telegram Bot API Local Server
+*.binlog
+telethon_session.session
