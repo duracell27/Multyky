@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import os
+import uuid
 
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
@@ -405,7 +407,6 @@ async def process_download_confirm(callback: CallbackQuery, state: FSMContext, b
     admin_id = callback.from_user.id
     await state.clear()
 
-    import asyncio
     asyncio.create_task(
         _download_and_create_movie(
             bot=bot,
@@ -438,7 +439,6 @@ async def _download_and_create_movie(
     series_name: str | None,
     part_number: int | None,
 ):
-    import uuid
     uid = str(uuid.uuid4())[:8]
     poster_path = f"/tmp/{uid}_poster.jpg"
     video_path = f"/tmp/{uid}_movie.mp4"
@@ -510,6 +510,7 @@ async def _download_and_create_movie(
             file_size=file_size,
             duration=duration,
             series_name=series_name,
+            part_number=part_number,
         )
         movie_id = str(movie["_id"])
 

@@ -160,4 +160,3 @@ class AutoMovieStates(StatesGroup):
     waiting_for_part_number = State()
     # підтвердження і завантаження
     confirming_download = State()
-    waiting_for_poster_manual = State()

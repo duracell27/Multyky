@@ -15,7 +15,8 @@ async def create_movie(
     added_by: int,
     file_size: int = 0,
     duration: int = 0,
-    series_name: str = None
+    series_name: str = None,
+    part_number: int = None,
 ) -> dict:
     """
     Створити новий мультфільм
@@ -38,9 +39,10 @@ async def create_movie(
         "ratings": [],
     }
 
-    # Додаємо series_name якщо вказано
     if series_name:
         movie_data["series_name"] = series_name
+    if part_number:
+        movie_data["part_number"] = part_number
 
     result = await db.videos.insert_one(movie_data)
     movie_data["_id"] = result.inserted_id
