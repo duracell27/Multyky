@@ -205,6 +205,169 @@ def _sync_get_m3u8_url(episode_url: str) -> str:
     return _make_absolute(url)
 
 
+def _sync_parse_movie_page(url: str) -> dict:
+    """
+    Parse a uakino.best movie page and return metadata.
+
+    Returns dict with keys: title, title_en, year, imdb, poster_url, dubbings.
+    Any field can be None if not found on the page.
+
+    Two page variants are handled:
+      • AJAX playlist variant  — has a <div class="playlists-ajax" data-news_id="...">
+        block; dubbing list comes from the playlist endpoint (same as series pages).
+        Each episode in the playlist is one dubbing of the movie.
+      • Direct iframe variant  — has a plain <iframe src="https://ashdi.vip/vod/...">
+        block; the tab label ("UA #1", etc.) is treated as the single dubbing.
+    """
+    resp = _fetch(url)
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # ── Ukrainian title ───────────────────────────────────────────────────
+    title = None
+    solototle = soup.find(class_="solototle")
+    if solototle:
+        title = solototle.get_text(strip=True)
+    else:
+        h1 = soup.find("h1")
+        if h1:
+            title = h1.get_text(strip=True)
+
+    # ── English / original title ──────────────────────────────────────────
+    title_en = None
+    orig = soup.find(class_="origintitle")
+    if orig:
+        title_en = orig.get_text(strip=True)
+
+    # ── Year — from the .film-info section ────────────────────────────────
+    year = None
+    film_info = soup.find(class_="film-info")
+    if film_info:
+        for item in film_info.find_all("div", class_="fi-item"):
+            label = item.find("div", class_="fi-label")
+            desc = item.find("div", class_="fi-desc")
+            if label and desc and "Рік" in label.get_text():
+                m = re.search(r"\d{4}", desc.get_text(strip=True))
+                if m:
+                    year = int(m.group(0))
+                break
+
+    # ── IMDB rating — fi-item whose label contains the imdb-mini image ────
+    imdb = None
+    if film_info:
+        for item in film_info.find_all("div", class_="fi-item"):
+            label = item.find("div", class_="fi-label")
+            desc = item.find("div", class_="fi-desc")
+            if label and label.find("img", src=re.compile(r"imdb", re.I)):
+                if desc:
+                    m = re.search(r"([0-9]+\.[0-9]+)", desc.get_text(strip=True))
+                    if m:
+                        try:
+                            imdb = float(m.group(1))
+                        except ValueError:
+                            pass
+                break
+
+    # ── Poster — full-resolution URL from the .film-poster anchor ─────────
+    poster_url = None
+    film_poster = soup.find("div", class_="film-poster")
+    if film_poster:
+        anchor = film_poster.find("a", href=True)
+        if anchor:
+            href = anchor["href"]
+            poster_url = href if href.startswith("http") else "https://uakino.best" + href
+
+    # ── Dubbings ──────────────────────────────────────────────────────────
+    # Check which player variant the page uses.
+    ajax_div = soup.find("div", class_="playlists-ajax")
+    if ajax_div and ajax_div.get("data-news_id"):
+        # AJAX variant: reuse existing playlist helpers.
+        # Each "episode" in the playlist is one dubbing of the movie.
+        try:
+            playlist_html = _get_playlist_html(url)
+            parsed = _parse_playlist_html(playlist_html)
+            # For movies the dubbing name lives in episode["voice"]
+            voices = [ep["voice"] for ep in parsed["episodes"] if ep.get("voice")]
+            dubbings = voices if voices else parsed["dubbings"]
+        except Exception:
+            dubbings = []
+    else:
+        # Direct iframe variant: collect non-Trailer tab labels.
+        dubbings = []
+        players_section = soup.find("div", class_="players-section")
+        if players_section:
+            tabs_ul = players_section.find("ul", class_="tabs")
+            if tabs_ul:
+                for li in tabs_ul.find_all("li"):
+                    text_val = li.get_text(strip=True)
+                    if text_val and "Трейлер" not in text_val:
+                        dubbings.append(text_val)
+
+    return {
+        "title": title,
+        "title_en": title_en,
+        "year": year,
+        "imdb": imdb,
+        "poster_url": poster_url,
+        "dubbings": dubbings,
+    }
+
+
+def _sync_download_poster(poster_url: str, output_path: str) -> bool:
+    """Download a poster image to output_path. Returns True on success."""
+    try:
+        resp = _fetch(poster_url)
+        with open(output_path, "wb") as f:
+            f.write(resp.content)
+        return True
+    except Exception:
+        return False
+
+
+def _sync_get_movie_m3u8(url: str, dubbing: str) -> str:
+    """
+    For a movie page, get the m3u8 URL for the selected dubbing.
+
+    Handles two page variants:
+      • AJAX playlist variant — fetches the playlist and maps dubbing → ashdi URL.
+      • Direct iframe variant — ignores dubbing (only one stream) and reads the
+        ashdi iframe src directly from the page HTML.
+    """
+    resp = _fetch(url)
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Determine which variant we're dealing with
+    ajax_div = soup.find("div", class_="playlists-ajax")
+    if ajax_div and ajax_div.get("data-news_id"):
+        # AJAX variant — same logic as series pages but per-dubbing
+        playlist_html = _get_playlist_html(url)
+        parsed = _parse_playlist_html(playlist_html)
+        episodes = parsed["episodes"]
+
+        # Match by voice name (exact)
+        matched = [ep["file"] for ep in episodes if ep["voice"] == dubbing]
+        if not matched:
+            # Fallback: match by data_id
+            target_id = parsed["dubbing_ids"].get(dubbing)
+            if target_id:
+                matched = [ep["file"] for ep in episodes if ep["data_id"] == target_id]
+
+        if not matched:
+            voices = [ep["voice"] for ep in episodes if ep.get("voice")]
+            raise ValueError(
+                f"Dubbing {dubbing!r} not found. Available: {voices or parsed['dubbings']}"
+            )
+
+        episode_url = matched[0]
+    else:
+        # Direct iframe variant — there is only one ashdi player on the page
+        iframe = soup.find("iframe", src=re.compile(r"ashdi\.vip", re.I))
+        if not iframe:
+            raise ValueError(f"No ashdi.vip iframe found on movie page: {url}")
+        episode_url = iframe["src"]
+
+    return _sync_get_m3u8_url(episode_url)
+
+
 # ---------------------------------------------------------------------------
 # Public async API
 # ---------------------------------------------------------------------------
@@ -233,3 +396,33 @@ async def get_m3u8_url(episode_url: str) -> str:
     """Fetch the episode player page and extract the HLS m3u8 URL."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, partial(_sync_get_m3u8_url, episode_url))
+
+
+async def parse_movie_page(url: str) -> dict:
+    """
+    Parse a uakino.best movie page.
+    Returns {title, title_en, year, imdb, poster_url, dubbings}.
+    Any field may be None if not found.
+    Handles both direct-iframe and AJAX-playlist page variants.
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, partial(_sync_parse_movie_page, url))
+
+
+async def download_poster(poster_url: str, output_path: str) -> bool:
+    """Download poster image to output_path. Returns True on success."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, partial(_sync_download_poster, poster_url, output_path)
+    )
+
+
+async def get_movie_m3u8(url: str, dubbing: str) -> str:
+    """
+    Get m3u8 URL for the given dubbing from a movie page.
+    Handles both direct-iframe and AJAX-playlist page variants.
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, partial(_sync_get_movie_m3u8, url, dubbing)
+    )
