@@ -11,7 +11,7 @@ from bot.database.auto_download_jobs import (
     get_job, update_job_progress, set_job_status
 )
 from bot.database.movies import add_episode_to_series
-from bot.utils.ffmpeg_runner import run_ffmpeg
+from bot.utils.ffmpeg_runner import run_ffmpeg, get_video_info, create_thumbnail
 from bot.utils.scraper import get_m3u8_url
 
 logger = logging.getLogger(__name__)
@@ -91,14 +91,19 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
         ep_num = idx + 1
         output_path = f"/tmp/{job_id}_e{ep_num}.mp4"
 
+        thumb_path = output_path + ".thumb.jpg"
         try:
             # 1. Get m3u8
             m3u8_url = await get_m3u8_url(episode_url)
 
-            # 2. Download + remux
+            # 2. Download + remux with faststart
             await run_ffmpeg(m3u8_url, output_path)
 
-            # 3. Upload to storage channel (local Bot API server — no size limit)
+            # 3. Get video metadata and thumbnail
+            duration, width, height = await get_video_info(output_path)
+            has_thumb = await create_thumbnail(output_path, thumb_path)
+
+            # 4. Upload to storage channel (local Bot API server — no size limit)
             caption = (
                 f"id:{series_id}\n"
                 f"season:{season}\n"
@@ -110,6 +115,10 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
                 video=FSInputFile(output_path),
                 caption=caption,
                 supports_streaming=True,
+                width=width or None,
+                height=height or None,
+                duration=duration or None,
+                thumbnail=FSInputFile(thumb_path) if has_thumb else None,
             )
             file_id = sent.video.file_id
             file_size = sent.video.file_size or 0
@@ -148,6 +157,8 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
         finally:
             if await asyncio.to_thread(os.path.exists, output_path):
                 await asyncio.to_thread(os.remove, output_path)
+            if await asyncio.to_thread(os.path.exists, thumb_path):
+                await asyncio.to_thread(os.remove, thumb_path)
 
     await set_job_status(job_id, "done")
     await bot.send_message(

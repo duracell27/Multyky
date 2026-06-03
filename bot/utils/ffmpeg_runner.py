@@ -1,4 +1,6 @@
 import asyncio
+import json
+import math
 import os
 
 
@@ -25,6 +27,47 @@ async def run_ffmpeg(m3u8_url: str, output_path: str) -> None:
     finally:
         if os.path.exists(raw_path):
             os.remove(raw_path)
+
+
+async def get_video_info(path: str) -> tuple[int, int, int]:
+    """Returns (duration_sec, width, height) via ffprobe."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height,duration",
+        "-of", "json", path,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    data = json.loads(stdout)
+    streams = data.get("streams", [])
+    if not streams:
+        return 0, 0, 0
+    s = streams[0]
+    w = int(s.get("width", 0))
+    h = int(s.get("height", 0))
+    duration = math.ceil(float(s.get("duration", 0)))
+    return duration, w, h
+
+
+async def create_thumbnail(video_path: str, thumb_path: str) -> bool:
+    """Extracts a frame at 5s as JPEG thumbnail. Returns True on success."""
+    cmd = [
+        "ffmpeg", "-y", "-ss", "5", "-i", video_path,
+        "-vframes", "1", "-vf", "scale=320:-1",
+        thumb_path,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await proc.communicate()
+    return proc.returncode == 0 and os.path.exists(thumb_path)
 
 
 async def _run_cmd(cmd: list[str], timeout: int) -> None:
