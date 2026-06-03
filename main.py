@@ -92,7 +92,7 @@ def start_local_bot_api() -> subprocess.Popen:
     """Запускає Telegram Bot API Local Server як дочірній процес."""
     proc = subprocess.Popen(
         [
-            "/Users/Apple/telegram-bot-api/build/telegram-bot-api",
+            config.LOCAL_BOT_API_BINARY,
             f"--api-id={config.TELEGRAM_API_ID}",
             f"--api-hash={config.TELEGRAM_API_HASH}",
             "--local",

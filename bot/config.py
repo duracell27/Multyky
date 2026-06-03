@@ -28,9 +28,15 @@ class Config:
     # Канал для новин (постинг фільмів)
     NEWS_CHANNEL_ID = os.getenv("NEWS_CHANNEL_ID", "")
 
-    # Telethon (для завантаження великих файлів)
+    # Telegram API credentials (для Local Bot API Server)
     TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
     TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "")
+
+    # Шлях до бінарника Telegram Bot API Local Server
+    LOCAL_BOT_API_BINARY = os.getenv(
+        "LOCAL_BOT_API_BINARY",
+        "/Users/Apple/telegram-bot-api/build/telegram-bot-api"
+    )
 
     @classmethod
     def validate(cls):
