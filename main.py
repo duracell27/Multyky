@@ -13,7 +13,10 @@ from apscheduler.triggers.cron import CronTrigger
 from bot.config import config
 from bot.database import db
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from bot.handlers import common_router, admin_router, catalog_router, broadcast_router, auto_download_router
+from bot.handlers import (
+    common_router, admin_router, catalog_router,
+    broadcast_router, auto_download_router, auto_movie_router
+)
 from bot.database.users import send_daily_registration_report
 from bot.database.broadcasts import get_scheduled_broadcasts
 from bot.handlers.broadcast import send_broadcast_to_users
@@ -143,6 +146,7 @@ async def main():
     dp.include_router(catalog_router)
     dp.include_router(broadcast_router)
     dp.include_router(auto_download_router)
+    dp.include_router(auto_movie_router)
 
     # Підключення до бази даних
     await db.connect()
@@ -214,6 +218,7 @@ async def main():
     # Додаткові команди для адмінів
     from aiogram.types import BotCommandScopeChat
     admin_commands = commands + [
+        BotCommand(command="autoMovie", description="Завантажити фільм з uakino.best"),
         BotCommand(command="autoDownload", description="Автозавантаження серій з uakino.best"),
         BotCommand(command="cancelDownload", description="Зупинити активне завантаження"),
     ]

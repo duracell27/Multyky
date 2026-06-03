@@ -1671,6 +1671,10 @@ async def btn_admin(message: Message):
 
     await message.answer(
         "⚙️ <b>Адмін-панель</b>\n\n"
+        "🤖 <b>Автозавантаження:</b>\n"
+        "/autoMovie - Завантажити фільм з uakino.best\n"
+        "/autoDownload - Завантажити серіал з uakino.best\n"
+        "/cancelDownload - Зупинити завантаження\n\n"
         "<b>Мультфільми:</b>\n"
         "/addMovie - Додати мультфільм\n"
         "/addBatchMovie - Додати серіал (базовий)\n"
