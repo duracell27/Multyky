@@ -208,8 +208,21 @@ async def main():
         BotCommand(command="menu", description="Головне меню"),
     ]
 
-    # Встановлюємо команди
+    # Встановлюємо команди для звичайних користувачів
     await bot.set_my_commands(commands)
+
+    # Додаткові команди для адмінів
+    from aiogram.types import BotCommandScopeChat
+    admin_commands = commands + [
+        BotCommand(command="autoDownload", description="Автозавантаження серій з uakino.best"),
+        BotCommand(command="cancelDownload", description="Зупинити активне завантаження"),
+    ]
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=admin_id))
+        except Exception:
+            pass
+
     logging.info("✅ Меню команд налаштовано")
 
     try:
