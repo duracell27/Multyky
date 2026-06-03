@@ -12,9 +12,12 @@ Flow:
 """
 
 import asyncio
+import logging
 import re
 from functools import partial
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 import requests
 from bs4 import BeautifulSoup
@@ -288,7 +291,8 @@ def _sync_parse_movie_page(url: str) -> dict:
             # For movies the dubbing name lives in episode["voice"]
             voices = [ep["voice"] for ep in parsed["episodes"] if ep.get("voice")]
             dubbings = voices if voices else parsed["dubbings"]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Could not fetch playlist for movie {url}: {e}")
             dubbings = []
     else:
         # Direct iframe variant: collect non-Trailer tab labels.
@@ -319,7 +323,8 @@ def _sync_download_poster(poster_url: str, output_path: str) -> bool:
         with open(output_path, "wb") as f:
             f.write(resp.content)
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to download poster from {poster_url}: {e}")
         return False
 
 
