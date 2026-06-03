@@ -141,3 +141,23 @@ class AutoDownloadStates(StatesGroup):
     waiting_for_url = State()
     choosing_dubbing = State()
     confirming = State()
+
+
+class AutoMovieStates(StatesGroup):
+    """Стани для автоматичного завантаження фільму"""
+    waiting_for_url = State()
+    confirming_metadata = State()
+    # ручне заповнення (якщо парсинг неповний або адмін відмовився)
+    waiting_for_title_manual = State()
+    waiting_for_title_en_manual = State()
+    waiting_for_year_manual = State()
+    waiting_for_imdb_manual = State()
+    # озвучка і серія
+    choosing_dubbing = State()
+    choosing_series_membership = State()
+    choosing_existing_series = State()
+    waiting_for_new_series_name = State()
+    waiting_for_part_number = State()
+    # підтвердження і завантаження
+    confirming_download = State()
+    waiting_for_poster_manual = State()
