@@ -128,15 +128,19 @@ class PostToChannelStates(StatesGroup):
 
 class AutoDownloadStates(StatesGroup):
     """Стани для автоматичного завантаження серій"""
-    choosing_series_type = State()       # новий серіал чи існуючий?
-    # гілка нового серіалу
+    choosing_series_type = State()
+    # новий серіал — через URL
+    waiting_for_new_series_url = State()
+    confirming_new_series_metadata = State()
     waiting_for_new_series_title = State()
     waiting_for_new_series_title_en = State()
     waiting_for_new_series_year = State()
     waiting_for_new_series_imdb = State()
     waiting_for_new_series_poster = State()
-    # спільні кроки
+    # існуючий серіал — через URL або список
+    waiting_for_existing_series_url = State()
     choosing_existing_series = State()
+    # спільні кроки
     waiting_for_season = State()
     waiting_for_url = State()
     choosing_dubbing = State()
@@ -162,3 +166,38 @@ class AutoMovieStates(StatesGroup):
     confirming_duplicate = State()
     # підтвердження і завантаження
     confirming_download = State()
+
+
+class AutoAnimeMovieStates(StatesGroup):
+    """Стани для автоматичного завантаження аніме-фільму"""
+    waiting_for_url = State()
+    confirming_metadata = State()
+    waiting_for_title_manual = State()
+    waiting_for_title_en_manual = State()
+    waiting_for_year_manual = State()
+    waiting_for_imdb_manual = State()
+    choosing_dubbing = State()
+    choosing_series_membership = State()
+    choosing_existing_series = State()
+    waiting_for_new_series_name = State()
+    waiting_for_part_number = State()
+    confirming_duplicate = State()
+    confirming_download = State()
+
+
+class AutoAnimeDownloadStates(StatesGroup):
+    """Стани для автоматичного завантаження аніме-серіалу"""
+    choosing_series_type = State()
+    waiting_for_new_series_url = State()
+    confirming_new_series_metadata = State()
+    waiting_for_new_series_title = State()
+    waiting_for_new_series_title_en = State()
+    waiting_for_new_series_year = State()
+    waiting_for_new_series_imdb = State()
+    waiting_for_new_series_poster = State()
+    waiting_for_existing_series_url = State()
+    choosing_existing_series = State()
+    waiting_for_season = State()
+    waiting_for_url = State()
+    choosing_dubbing = State()
+    confirming = State()
