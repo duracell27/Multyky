@@ -10,6 +10,7 @@ async def create_job(
     dubbing: str,
     episode_urls: list[str],
     admin_id: int,
+    content_type: str = "series",
 ) -> str:
     doc = {
         "series_id": series_id,
@@ -21,6 +22,7 @@ async def create_job(
         "current_episode": 0,
         "status": "running",
         "admin_id": admin_id,
+        "content_type": content_type,
         "created_at": datetime.now(timezone.utc),
     }
     result = await db.auto_download_jobs.insert_one(doc)

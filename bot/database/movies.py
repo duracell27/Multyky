@@ -135,8 +135,8 @@ async def get_movie_by_title(title: str) -> Optional[dict]:
     return await db.videos.find_one({"title": title})
 
 
-async def find_movie_by_titles(title: str | None, title_en: str | None) -> Optional[dict]:
-    """Case-insensitive search by Ukrainian or English title (movies only)."""
+async def find_movie_by_titles(title: str | None, title_en: str | None, content_type: str = "movie") -> Optional[dict]:
+    """Case-insensitive search by Ukrainian or English title."""
     conditions = []
     if title:
         conditions.append({"title": {"$regex": f"^{re.escape(title)}$", "$options": "i"}})
@@ -146,7 +146,7 @@ async def find_movie_by_titles(title: str | None, title_en: str | None) -> Optio
         return None
     return await db.videos.find_one({
         "$or": conditions,
-        "content_type": "movie",
+        "content_type": content_type,
     })
 
 
@@ -822,7 +822,8 @@ async def create_anime_movie(
     added_by: int,
     file_size: int = 0,
     duration: int = 0,
-    series_name: str = None
+    series_name: str = None,
+    part_number: int = None,
 ) -> dict:
     """
     Створити новий аніме-фільм
@@ -845,9 +846,10 @@ async def create_anime_movie(
         "ratings": [],
     }
 
-    # Додаємо series_name якщо вказано
     if series_name:
         movie_data["series_name"] = series_name
+    if part_number:
+        movie_data["part_number"] = part_number
 
     result = await db.videos.insert_one(movie_data)
     movie_data["_id"] = result.inserted_id
