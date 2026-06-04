@@ -296,77 +296,25 @@ def _sync_parse_movie_page(url: str) -> dict:
     resp = _fetch(url)
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # ── Ukrainian title ───────────────────────────────────────────────────
-    title = None
-    solototle = soup.find(class_="solototle")
-    if solototle:
-        title = solototle.get_text(strip=True)
-    else:
-        h1 = soup.find("h1")
-        if h1:
-            title = h1.get_text(strip=True)
+    meta = _extract_dle_metadata(soup, "https://uakino.best")
+    title = meta["title"]
+    title_en = meta["title_en"]
+    year = meta["year"]
+    imdb = meta["imdb"]
+    poster_url = meta["poster_url"]
 
-    # ── English / original title ──────────────────────────────────────────
-    title_en = None
-    orig = soup.find(class_="origintitle")
-    if orig:
-        title_en = orig.get_text(strip=True)
-
-    # ── Year — from the .film-info section ────────────────────────────────
-    year = None
-    film_info = soup.find(class_="film-info")
-    if film_info:
-        for item in film_info.find_all("div", class_="fi-item"):
-            label = item.find("div", class_="fi-label")
-            desc = item.find("div", class_="fi-desc")
-            if label and desc and "Рік" in label.get_text():
-                m = re.search(r"\d{4}", desc.get_text(strip=True))
-                if m:
-                    year = int(m.group(0))
-                break
-
-    # ── IMDB rating — fi-item whose label contains the imdb-mini image ────
-    imdb = None
-    if film_info:
-        for item in film_info.find_all("div", class_="fi-item"):
-            label = item.find("div", class_="fi-label")
-            desc = item.find("div", class_="fi-desc")
-            if label and label.find("img", src=re.compile(r"imdb", re.I)):
-                if desc:
-                    m = re.search(r"([0-9]+\.[0-9]+)", desc.get_text(strip=True))
-                    if m:
-                        try:
-                            imdb = float(m.group(1))
-                        except ValueError:
-                            pass
-                break
-
-    # ── Poster — full-resolution URL from the .film-poster anchor ─────────
-    poster_url = None
-    film_poster = soup.find("div", class_="film-poster")
-    if film_poster:
-        anchor = film_poster.find("a", href=True)
-        if anchor:
-            href = anchor["href"]
-            poster_url = href if href.startswith("http") else "https://uakino.best" + href
-
-    # ── Dubbings ──────────────────────────────────────────────────────────
-    # Check which player variant the page uses.
+    # ── Dubbings ──────────────────────────────────────────────────────────────
     ajax_div = soup.find("div", class_="playlists-ajax")
     if ajax_div and ajax_div.get("data-news_id"):
-        # AJAX variant: reuse existing playlist helpers.
-        # Each "episode" in the playlist is one dubbing of the movie.
         try:
             playlist_html = _get_playlist_html(url)
             parsed = _parse_playlist_html(playlist_html)
-            # For movies the dubbing name lives in episode["voice"]
             voices = [ep["voice"] for ep in parsed["episodes"] if ep.get("voice")]
             dubbings = voices if voices else parsed["dubbings"]
         except Exception as e:
             logger.warning(f"Could not fetch playlist for movie {url}: {e}")
             dubbings = []
     else:
-        # Direct iframe variant: collect non-Trailer tab labels.
         dubbings = []
         players_section = soup.find("div", class_="players-section")
         if players_section:
@@ -397,6 +345,113 @@ def _sync_download_poster(poster_url: str, output_path: str) -> bool:
     except Exception as e:
         logger.warning(f"Failed to download poster from {poster_url}: {e}")
         return False
+
+
+def _detect_site(url: str) -> str:
+    """Return 'uafix' if URL is from uafix.net, else 'uakino'."""
+    if "uafix.net" in url:
+        return "uafix"
+    return "uakino"
+
+
+def _extract_dle_metadata(soup: "BeautifulSoup", base_url: str) -> dict:
+    """
+    Extract title/title_en/year/imdb/poster_url from a DLE (DataLife Engine) page.
+    Works for both uakino.best and uafix.net which share the same CMS and CSS classes.
+    Returns dict with keys: title, title_en, year, imdb, poster_url (all may be None).
+    """
+    title = None
+    solototle = soup.find(class_="solototle")
+    if solototle:
+        title = solototle.get_text(strip=True)
+    else:
+        h1 = soup.find("h1")
+        if h1:
+            title = h1.get_text(strip=True)
+
+    title_en = None
+    orig = soup.find(class_="origintitle")
+    if orig:
+        title_en = orig.get_text(strip=True)
+
+    year = None
+    film_info = soup.find(class_="film-info")
+    if film_info:
+        for item in film_info.find_all("div", class_="fi-item"):
+            label = item.find("div", class_="fi-label")
+            desc = item.find("div", class_="fi-desc")
+            if label and desc and "Рік" in label.get_text():
+                m = re.search(r"\d{4}", desc.get_text(strip=True))
+                if m:
+                    year = int(m.group(0))
+                break
+
+    imdb = None
+    if film_info:
+        for item in film_info.find_all("div", class_="fi-item"):
+            label = item.find("div", class_="fi-label")
+            desc = item.find("div", class_="fi-desc")
+            if label and label.find("img", src=re.compile(r"imdb", re.I)):
+                if desc:
+                    m = re.search(r"([0-9]+\.[0-9]+)", desc.get_text(strip=True))
+                    if m:
+                        try:
+                            imdb = float(m.group(1))
+                        except ValueError:
+                            pass
+                break
+
+    poster_url = None
+    film_poster = soup.find("div", class_="film-poster")
+    if film_poster:
+        anchor = film_poster.find("a", href=True)
+        if anchor:
+            href = anchor["href"]
+            poster_url = href if href.startswith("http") else base_url.rstrip("/") + href
+
+    return {
+        "title": title,
+        "title_en": title_en,
+        "year": year,
+        "imdb": imdb,
+        "poster_url": poster_url,
+    }
+
+
+def _sync_parse_uafix_movie_page(url: str) -> dict:
+    """
+    Parse a uafix.net movie page. Returns same dict shape as _sync_parse_movie_page.
+    uafix movies always have a single stream (no dubbing choice), so dubbings=["UA"].
+    """
+    resp = _fetch(url)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    meta = _extract_dle_metadata(soup, "https://uafix.net")
+    return {**meta, "dubbings": ["UA"]}
+
+
+def _sync_get_uafix_movie_m3u8(url: str) -> str:
+    """
+    Get m3u8 URL for a uafix.net movie.
+    Flow: movie page → zetvideo.net iframe → Playerjs file → m3u8.
+    """
+    resp = _fetch(url)
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    iframe = soup.find("iframe", src=re.compile(r"zetvideo\.net", re.I))
+    if not iframe:
+        raise ValueError(f"No zetvideo.net iframe found on uafix movie page: {url}")
+
+    zetvideo_url = _make_absolute(iframe["src"])
+    resp2 = _fetch(zetvideo_url, referer=url)
+
+    m3u8_match = re.search(
+        r"""file\s*:\s*['"]((https?:)?//[^'"]+\.m3u8)['"]""",
+        resp2.text,
+    )
+    if not m3u8_match:
+        raise ValueError(f"No m3u8 URL found on zetvideo page: {zetvideo_url}")
+
+    return _resolve_best_quality_m3u8(_make_absolute(m3u8_match.group(1)))
 
 
 def _sync_get_movie_m3u8(url: str, dubbing: str) -> str:
