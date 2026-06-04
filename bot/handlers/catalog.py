@@ -959,7 +959,8 @@ async def send_episode(callback: CallbackQuery, bot: Bot):
     caption = (
         f"📺 <b>{episode['series_title']}</b>\n"
         f"Сезон {episode['season']}, Серія {episode['episode']}\n\n"
-        f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики 🇺🇦 | Мультфільми Українською</a>"
+        f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики 🇺🇦 | Мультфільми Українською</a>\n"
+        f"📢 <a href='https://t.me/multyky_ua_channel'>Канал з оновленнями контенту</a>"
     )
 
     # Відправляємо відео
@@ -1082,7 +1083,8 @@ async def send_movie(callback: CallbackQuery, bot: Bot):
     # Формуємо підпис для відео
     caption = (
         f"🎬 <b>{movie['title']}</b>\n\n"
-        f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики 🇺🇦 | Мультфільми Українською</a>"
+        f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики 🇺🇦 | Мультфільми Українською</a>\n"
+        f"📢 <a href='https://t.me/multyky_ua_channel'>Канал з оновленнями контенту</a>"
     )
 
     # Перевіряємо чи фільм вже переглянутий
