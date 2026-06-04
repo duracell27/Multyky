@@ -178,13 +178,21 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
     await set_job_status(job_id, "done")
 
     bot_info = await bot.get_me()
-    view_url = f"https://t.me/{bot_info.username}?start=s_{series_id}"
+    is_anime = job.get("content_type") == "anime_series"
+    view_prefix = "as_" if is_anime else "s_"
+    post_type = "anime_series" if is_anime else "series"
+    add_series_cb = "aad_add_new:series" if is_anime else "ad_add_new:series"
+    add_movie_cb = "aam_add_new:movie" if is_anime else "am_add_new:movie"
+    add_movie_label = "🎬 Додати аніме-фільм" if is_anime else "🎬 Додати фільм"
+    add_series_label = "➕ Ще аніме-серіал" if is_anime else "➕ Додати ще серіал"
+
+    view_url = f"https://t.me/{bot_info.username}?start={view_prefix}{series_id}"
 
     done_markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Зробити розсилку", callback_data=f"post_quick:series:{series_id}")],
+        [InlineKeyboardButton(text="📢 Зробити розсилку", callback_data=f"post_quick:{post_type}:{series_id}")],
         [InlineKeyboardButton(text="📺 Переглянути серіал", url=view_url)],
-        [InlineKeyboardButton(text="➕ Додати ще серіал", callback_data="ad_add_new:series"),
-         InlineKeyboardButton(text="🎬 Додати фільм", callback_data="am_add_new:movie")],
+        [InlineKeyboardButton(text=add_series_label, callback_data=add_series_cb),
+         InlineKeyboardButton(text=add_movie_label, callback_data=add_movie_cb)],
     ])
 
     await bot.send_message(
