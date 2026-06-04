@@ -42,15 +42,14 @@ async def process_ad_add_new(callback: CallbackQuery, state: FSMContext):
         return
     await state.clear()
     buttons = [
-        [InlineKeyboardButton(text="➕ Новий серіал", callback_data="ad_series_type:new")],
-        [InlineKeyboardButton(text="📺 Існуючий серіал", callback_data="ad_series_type:existing")],
+        [InlineKeyboardButton(text="🎬 uakino.best", callback_data="ad_site:uakino")],
+        [InlineKeyboardButton(text="🌐 uafix.net", callback_data="ad_site:uafix")],
     ]
     await callback.message.answer(
-        "🤖 <b>Автозавантаження серій</b>\n\n"
-        "Додати серії до нового чи існуючого серіалу?",
+        "🤖 <b>Автозавантаження серій</b>\n\nЗ якого сайту завантажити?",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
     )
-    await state.set_state(AutoDownloadStates.choosing_series_type)
+    await state.set_state(AutoDownloadStates.choosing_site)
     await callback.answer()
 
 
@@ -61,17 +60,33 @@ async def cmd_auto_download(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await message.answer("⛔️ Тільки для адміністраторів.")
         return
+    buttons = [
+        [InlineKeyboardButton(text="🎬 uakino.best", callback_data="ad_site:uakino")],
+        [InlineKeyboardButton(text="🌐 uafix.net", callback_data="ad_site:uafix")],
+    ]
+    await message.answer(
+        "🤖 <b>Автозавантаження серій</b>\n\nЗ якого сайту завантажити?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await state.set_state(AutoDownloadStates.choosing_site)
 
+
+@router.callback_query(AutoDownloadStates.choosing_site, F.data.startswith("ad_site:"))
+async def process_series_site_choice(callback: CallbackQuery, state: FSMContext):
+    site = callback.data.split(":")[1]
+    await state.update_data(site=site)
+    site_name = "uakino.best" if site == "uakino" else "uafix.net"
     buttons = [
         [InlineKeyboardButton(text="➕ Новий серіал", callback_data="ad_series_type:new")],
         [InlineKeyboardButton(text="📺 Існуючий серіал", callback_data="ad_series_type:existing")],
     ]
-    await message.answer(
-        "🤖 <b>Автозавантаження серій</b>\n\n"
-        "Додати серії до нового чи існуючого серіалу?",
+    await callback.message.edit_text(
+        f"🤖 <b>Автозавантаження серій</b> ({site_name})\n\n"
+        f"Додати серії до нового чи існуючого серіалу?",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
     )
     await state.set_state(AutoDownloadStates.choosing_series_type)
+    await callback.answer()
 
 
 # ── Вибір типу серіалу ───────────────────────────────────────────────────────
@@ -79,14 +94,17 @@ async def cmd_auto_download(message: Message, state: FSMContext):
 @router.callback_query(AutoDownloadStates.choosing_series_type, F.data.startswith("ad_series_type:"))
 async def process_series_type(callback: CallbackQuery, state: FSMContext):
     choice = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    site = data.get("site", "uakino")
+    site_name = "uakino.best" if site == "uakino" else "uafix.net"
     if choice == "new":
         await callback.message.edit_text(
-            "➕ <b>Новий серіал</b>\n\nНадішли URL серіалу з uakino.best:"
+            f"➕ <b>Новий серіал</b>\n\nНадішли URL серіалу з {site_name}:"
         )
         await state.set_state(AutoDownloadStates.waiting_for_new_series_url)
     else:
         await callback.message.edit_text(
-            "📺 <b>Існуючий серіал</b>\n\nНадішли URL сезону з uakino.best — "
+            f"📺 <b>Існуючий серіал</b>\n\nНадішли URL сезону з {site_name} — "
             "я розпізнаю серіал автоматично:"
         )
         await state.set_state(AutoDownloadStates.waiting_for_existing_series_url)
@@ -98,8 +116,11 @@ async def process_series_type(callback: CallbackQuery, state: FSMContext):
 @router.message(AutoDownloadStates.waiting_for_new_series_url, ~F.text.startswith("/"))
 async def process_new_series_url(message: Message, state: FSMContext):
     url = message.text.strip()
-    if "uakino.best" not in url:
-        await message.answer("❌ URL має містити uakino.best. Спробуй ще раз:")
+    data = await state.get_data()
+    site = data.get("site", "uakino")
+    allowed = "uakino.best" if site == "uakino" else "uafix.net"
+    if allowed not in url:
+        await message.answer(f"❌ URL має містити {allowed}. Спробуй ще раз:")
         return
 
     await state.update_data(series_page_url=url)
@@ -378,8 +399,11 @@ async def _create_series_and_ask_season(message, state: FSMContext, poster_file_
 @router.message(AutoDownloadStates.waiting_for_existing_series_url, ~F.text.startswith("/"))
 async def process_existing_series_url(message: Message, state: FSMContext):
     url = message.text.strip()
-    if "uakino.best" not in url:
-        await message.answer("❌ URL має містити uakino.best. Спробуй ще раз:")
+    data = await state.get_data()
+    site = data.get("site", "uakino")
+    allowed = "uakino.best" if site == "uakino" else "uafix.net"
+    if allowed not in url:
+        await message.answer(f"❌ URL має містити {allowed}. Спробуй ще раз:")
         return
 
     await state.update_data(season_url=url)
@@ -517,15 +541,17 @@ async def process_season(message: Message, state: FSMContext):
     if data.get("season_url"):
         wait_msg = await message.answer("⏳ Парсю сторінку...")
         try:
-            dubbings = await get_dubbing_options(data["season_url"])
+            dubbings = await get_dubbing_options(data["season_url"], season=season)
         except Exception as e:
             await wait_msg.edit_text(f"❌ Не вдалося завантажити сторінку: {e}")
             return
         await _show_dubbing_picker(wait_msg, state, dubbings, edit=True)
     else:
+        site = data.get("site", "uakino")
+        site_name = "uakino.best" if site == "uakino" else "uafix.net"
         await message.answer(
             f"✅ Сезон: <b>{season}</b>\n\n"
-            f"Надішліть URL сезону з uakino.best:"
+            f"Надішліть URL сезону з {site_name}:"
         )
         await state.set_state(AutoDownloadStates.waiting_for_url)
 
@@ -533,15 +559,18 @@ async def process_season(message: Message, state: FSMContext):
 @router.message(AutoDownloadStates.waiting_for_url, ~F.text.startswith("/"))
 async def process_url(message: Message, state: FSMContext):
     url = message.text.strip()
-    if "uakino.best" not in url:
-        await message.answer("❌ URL має містити uakino.best. Спробуйте ще раз:")
+    data = await state.get_data()
+    site = data.get("site", "uakino")
+    allowed = "uakino.best" if site == "uakino" else "uafix.net"
+    if allowed not in url:
+        await message.answer(f"❌ URL має містити {allowed}. Спробуйте ще раз:")
         return
 
     await state.update_data(season_url=url)
     wait_msg = await message.answer("⏳ Парсю сторінку...")
 
     try:
-        dubbings = await get_dubbing_options(url)
+        dubbings = await get_dubbing_options(url, season=data.get("season"))
     except Exception as e:
         await wait_msg.edit_text(f"❌ Не вдалося завантажити сторінку: {e}")
         return
@@ -601,7 +630,7 @@ async def _confirm_dubbing(message, state: FSMContext, dubbing: str, edit: bool)
         message = msg
 
     try:
-        result = await parse_season_page(url, dubbing)
+        result = await parse_season_page(url, dubbing, season=data.get("season"))
     except Exception as e:
         await message.edit_text(f"❌ Помилка парсингу: {e}")
         return
