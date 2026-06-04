@@ -487,13 +487,68 @@ def _extract_dle_metadata(soup: "BeautifulSoup", base_url: str) -> dict:
 
 def _sync_parse_uafix_movie_page(url: str) -> dict:
     """
-    Parse a uafix.net movie page. Returns same dict shape as _sync_parse_movie_page.
-    uafix movies always have a single stream (no dubbing choice), so dubbings=["UA"].
+    Parse a uafix.net page (movie or series) and return metadata.
+    uafix.net uses a different HTML template than uakino.best:
+      - title:    <h1> text, part before first " / "
+      - title_en: <span class="eng-rus" itemprop="alternativeHeadline">
+      - year:     <span itemprop="dateCreated" class="year">
+      - imdb:     <span class="rat-imdb">
+      - poster:   <img class="gogo-online" src="...">
+    uafix movies have a single stream, so dubbings=["UA"].
     """
     resp = _fetch(url)
     soup = BeautifulSoup(resp.text, "html.parser")
-    meta = _extract_dle_metadata(soup, "https://uafix.net")
-    return {**meta, "dubbings": ["UA"]}
+
+    # Ukrainian title — take the part before the first " / "
+    title = None
+    h1 = soup.find("h1")
+    if h1:
+        raw = h1.get_text(strip=True)
+        title = raw.split(" / ")[0].strip() or raw
+
+    # English / original title
+    title_en = None
+    eng = soup.find("span", class_="eng-rus")
+    if not eng:
+        eng = soup.find(itemprop="alternativeHeadline")
+    if eng:
+        title_en = eng.get_text(strip=True)
+
+    # Year
+    year = None
+    year_span = soup.find("span", itemprop="dateCreated", class_="year")
+    if year_span:
+        m = re.search(r"\d{4}", year_span.get_text(strip=True))
+        if m:
+            year = int(m.group(0))
+
+    # IMDB rating
+    imdb = None
+    imdb_span = soup.find("span", class_="rat-imdb")
+    if imdb_span:
+        m = re.search(r"([0-9]+(?:\.[0-9]+)?)", imdb_span.get_text(strip=True))
+        if m:
+            try:
+                imdb = float(m.group(1))
+            except ValueError:
+                pass
+
+    # Poster — prefer data-src (lazy-loaded) over src
+    poster_url = None
+    poster_img = soup.find("img", class_="gogo-online")
+    if poster_img:
+        src = poster_img.get("data-src") or poster_img.get("src")
+        if src:
+            poster_url = src if src.startswith("http") else "https://uafix.net" + src
+
+    return {
+        "title": title,
+        "title_en": title_en,
+        "year": year,
+        "imdb": imdb,
+        "poster_url": poster_url,
+        "dubbings": ["UA"],
+    }
 
 
 def _sync_get_uafix_movie_m3u8(url: str) -> str:
