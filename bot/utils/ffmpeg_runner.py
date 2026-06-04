@@ -7,6 +7,21 @@ _TELEGRAM_SIZE_LIMIT = 1_900_000_000  # 1.9 GB — safe margin under Telegram's 
 _AUDIO_BITRATE_BPS = 192_000          # reserved for audio track
 
 
+def format_quality(width: int, height: int) -> str:
+    """Return a human-readable quality label, e.g. '1080p' or '1920×1080'."""
+    if not height:
+        return "невідомо"
+    if height >= 2160:
+        return f"4K ({width}×{height})"
+    if height >= 1080:
+        return f"1080p ({width}×{height})"
+    if height >= 720:
+        return f"720p ({width}×{height})"
+    if height >= 480:
+        return f"480p ({width}×{height})"
+    return f"{width}×{height}"
+
+
 async def run_ffmpeg(m3u8_url: str, output_path: str) -> bool:
     """
     Downloads m3u8 stream and produces a faststart-enabled mp4.

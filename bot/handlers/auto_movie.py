@@ -18,7 +18,7 @@ from bot.database.movies import (
     create_movie, get_all_movie_series_names, find_movie_by_titles
 )
 from bot.utils.scraper import parse_movie_page, download_poster, get_movie_m3u8
-from bot.utils.ffmpeg_runner import run_ffmpeg, get_video_info, create_thumbnail
+from bot.utils.ffmpeg_runner import run_ffmpeg, get_video_info, create_thumbnail, format_quality
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -198,6 +198,27 @@ async def process_imdb_manual(message: Message, state: FSMContext):
         await message.answer("❌ Введіть рейтинг від 0 до 10:")
         return
     await _handle_manual_field(message, state, "imdb", imdb)
+
+
+# ── Кнопки після завершення ───────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("am_add_new:"))
+async def process_add_new(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔️ Тільки для адміністраторів.", show_alert=True)
+        return
+    kind = callback.data.split(":")[1]
+    await state.clear()
+    if kind == "movie":
+        await callback.message.answer(
+            "🎬 <b>Автозавантаження фільму</b>\n\nНадішли URL фільму з uakino.best:"
+        )
+        await state.set_state(AutoMovieStates.waiting_for_url)
+    else:
+        await callback.message.answer(
+            "📺 Скористайся командою /autoDownload для додавання серіалу."
+        )
+    await callback.answer()
 
 
 # ── Дублікат ──────────────────────────────────────────────────────────────────
@@ -573,21 +594,25 @@ async def _download_and_create_movie(
 
         part_info = f" (частина {part_number})" if part_number else ""
         series_info = f"\n📁 Серія: {series_name}{part_info}" if series_name else ""
+        quality_label = format_quality(width, height)
 
-        broadcast_btn = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text="📢 Зробити розсилку",
-                callback_data=f"post_quick:movie:{movie_id}"
-            )
-        ]])
+        bot_info = await bot.get_me()
+        view_url = f"https://t.me/{bot_info.username}?start=m_{movie_id}"
+
+        done_markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Зробити розсилку", callback_data=f"post_quick:movie:{movie_id}")],
+            [InlineKeyboardButton(text="🎬 Переглянути фільм", url=view_url)],
+            [InlineKeyboardButton(text="➕ Додати ще фільм", callback_data="am_add_new:movie"),
+             InlineKeyboardButton(text="📺 Додати серіал", callback_data="am_add_new:series")],
+        ])
 
         await bot.send_message(
             admin_id,
             f"🎉 <b>Фільм «{title}» успішно додано!</b>\n\n"
-            f"🆔 ID: <code>{movie_id}</code>"
-            f"{series_info}\n\n"
-            f"Хочеш зробити розсилку?",
-            reply_markup=broadcast_btn,
+            f"🆔 ID: <code>{movie_id}</code>\n"
+            f"📺 Якість: <b>{quality_label}</b>"
+            f"{series_info}",
+            reply_markup=done_markup,
         )
 
     except Exception as e:

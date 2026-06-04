@@ -4,14 +4,14 @@ import os
 import shutil
 
 from aiogram import Bot
-from aiogram.types import FSInputFile
+from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.config import config
 from bot.database.auto_download_jobs import (
     get_job, update_job_progress, set_job_status
 )
 from bot.database.movies import add_episode_to_series, get_episode
-from bot.utils.ffmpeg_runner import run_ffmpeg, get_video_info, create_thumbnail
+from bot.utils.ffmpeg_runner import run_ffmpeg, get_video_info, create_thumbnail, format_quality
 from bot.utils.scraper import get_m3u8_url
 
 logger = logging.getLogger(__name__)
@@ -153,9 +153,10 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
             await update_job_progress(job_id, idx + 1)
 
             # 6. Notify admin
+            quality_label = format_quality(width, height)
             await bot.send_message(
                 admin_id,
-                f"✅ S{season}E{ep_num} додано ({ep_num}/{total})"
+                f"✅ S{season}E{ep_num} додано ({ep_num}/{total}) · {quality_label}"
             )
 
         except Exception as e:
@@ -175,8 +176,20 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
                 await asyncio.to_thread(os.remove, thumb_path)
 
     await set_job_status(job_id, "done")
+
+    bot_info = await bot.get_me()
+    view_url = f"https://t.me/{bot_info.username}?start=s_{series_id}"
+
+    done_markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Зробити розсилку", callback_data=f"post_quick:series:{series_id}")],
+        [InlineKeyboardButton(text="📺 Переглянути серіал", url=view_url)],
+        [InlineKeyboardButton(text="➕ Додати ще серіал", callback_data="ad_add_new:series"),
+         InlineKeyboardButton(text="🎬 Додати фільм", callback_data="am_add_new:movie")],
+    ])
+
     await bot.send_message(
         admin_id,
-        f"🎉 Готово! Всі {total} серій сезону {season} "
-        f"серіалу «{series_title}» успішно завантажено!"
+        f"🎉 <b>Готово!</b> Всі {total} серій сезону {season} "
+        f"серіалу «{series_title}» успішно завантажено!",
+        reply_markup=done_markup,
     )

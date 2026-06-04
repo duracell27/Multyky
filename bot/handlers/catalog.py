@@ -101,7 +101,7 @@ async def cmd_catalog(message: Message, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data.startswith("catalog:movies:new:"))
 async def show_movies_new(callback: CallbackQuery):
-    """Показати новинки (фільми 2025 року)"""
+    """Показати новинки (фільми 2025-2026 року)"""
 
     import logging
     logger = logging.getLogger(__name__)
@@ -133,14 +133,14 @@ async def show_movies_new(callback: CallbackQuery):
     years = [m.get('year') for m in all_movies]
     logger.info(f"Роки фільмів: {sorted(set(years))}")
 
-    # Фільтруємо тільки фільми 2025 року
-    new_movies = [m for m in all_movies if m.get('year') == 2025]
-    logger.info(f"Фільмів 2025 року: {len(new_movies)}")
+    # Фільтруємо тільки фільми 2025-2026 року
+    new_movies = [m for m in all_movies if m.get('year', 0) >= 2025]
+    logger.info(f"Фільмів 2025-2026 року: {len(new_movies)}")
     if new_movies:
         logger.info(f"Назви новинок: {[m.get('title') for m in new_movies]}")
 
     if not new_movies:
-        await callback.answer("❌ Новинок 2025 року поки немає", show_alert=True)
+        await callback.answer("❌ Новинок 2025-2026 років поки немає", show_alert=True)
         return
 
     # Сортуємо за рейтингом IMDb (від найвищого до найнижчого)
@@ -197,7 +197,7 @@ async def show_movies_new(callback: CallbackQuery):
     page_info = f"\n<i>Сторінка {page + 1}/{total_pages}</i>" if total_pages > 1 else ""
 
     await callback.message.edit_text(
-        f"🆕 <b>Новинки 2025:</b>\n\n"
+        f"🆕 <b>Новинки 2025-2026:</b>\n\n"
         f"Всього фільмів: {len(new_movies)}\n\n"
         f"Виберіть фільм для перегляду:{page_info}",
         reply_markup=keyboard
@@ -409,12 +409,12 @@ async def show_movies(callback: CallbackQuery):
     years = [m.get('year') for m in all_movies]
     logger.info(f"[CATALOG] Роки фільмів: {sorted(set(years))}")
 
-    # Підраховуємо кількість новинок (фільми 2025 року)
-    new_movies_2025 = [m for m in all_movies if m.get('year') == 2025]
-    new_movies_count = len(new_movies_2025)
-    logger.info(f"[CATALOG] Фільмів 2025 року: {new_movies_count}")
-    if new_movies_2025:
-        logger.info(f"[CATALOG] Назви: {[m.get('title') for m in new_movies_2025]}")
+    # Підраховуємо кількість новинок (фільми 2025-2026 року)
+    new_movies_recent = [m for m in all_movies if m.get('year', 0) >= 2025]
+    new_movies_count = len(new_movies_recent)
+    logger.info(f"[CATALOG] Фільмів 2025-2026 року: {new_movies_count}")
+    if new_movies_recent:
+        logger.info(f"[CATALOG] Назви: {[m.get('title') for m in new_movies_recent]}")
 
     # Додаємо кнопки "Новинки" і "Топ" на початку
     filter_buttons = []
@@ -495,7 +495,7 @@ async def show_series_movies(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("catalog:series:new:"))
 async def show_series_new(callback: CallbackQuery):
-    """Показати новинки серіалів (2025 року)"""
+    """Показати новинки серіалів (2025-2026 року)"""
 
     import logging
     logger = logging.getLogger(__name__)
@@ -510,14 +510,14 @@ async def show_series_new(callback: CallbackQuery):
     is_admin = callback.from_user.id in config.ADMIN_IDS
     all_series = await get_all_series_list(include_hidden=is_admin)
 
-    # Фільтруємо тільки серіали 2025 року
-    new_series = [s for s in all_series if s.get('year') == 2025]
-    logger.info(f"Серіалів 2025 року: {len(new_series)}")
+    # Фільтруємо тільки серіали 2025-2026 року
+    new_series = [s for s in all_series if s.get('year', 0) >= 2025]
+    logger.info(f"Серіалів 2025-2026 року: {len(new_series)}")
     if new_series:
         logger.info(f"Назви новинок: {[s.get('title') for s in new_series]}")
 
     if not new_series:
-        await callback.answer("❌ Новинок серіалів 2025 року поки немає", show_alert=True)
+        await callback.answer("❌ Новинок серіалів 2025-2026 року поки немає", show_alert=True)
         return
 
     # Сортуємо за рейтингом IMDb (від найвищого до найнижчого)
@@ -680,7 +680,7 @@ async def show_series(callback: CallbackQuery):
     page_items = series[start_idx:end_idx]
 
     # Кнопки фільтрів
-    new_series_count = len([s for s in series if s.get('year') == 2025])
+    new_series_count = len([s for s in series if s.get('year', 0) >= 2025])
     filter_buttons = []
     if new_series_count > 0:
         filter_buttons.append(
@@ -1375,7 +1375,7 @@ async def show_anime_categories(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("catalog:anime_movies:new:"))
 async def show_anime_movies_new(callback: CallbackQuery):
-    """Показати новинки аніме-фільмів (2025 року)"""
+    """Показати новинки аніме-фільмів (2025-2026 року)"""
 
     parts = callback.data.split(":")
     page = int(parts[3]) if len(parts) > 3 else 0
@@ -1391,11 +1391,11 @@ async def show_anime_movies_new(callback: CallbackQuery):
         all_movies.extend(movies)
     all_movies.extend(standalone)
 
-    # Фільтруємо тільки фільми 2025 року
-    new_movies = [m for m in all_movies if m.get('year') == 2025]
+    # Фільтруємо тільки фільми 2025-2026 року
+    new_movies = [m for m in all_movies if m.get('year', 0) >= 2025]
 
     if not new_movies:
-        await callback.answer("❌ Новинок аніме 2025 року поки немає", show_alert=True)
+        await callback.answer("❌ Новинок аніме 2025-2026 року поки немає", show_alert=True)
         return
 
     # Сортуємо за рейтингом
@@ -1551,7 +1551,7 @@ async def show_anime_movies(callback: CallbackQuery):
     for series_name, movies in grouped.items():
         all_movies.extend(movies)
     all_movies.extend(standalone)
-    new_movies_count = len([m for m in all_movies if m.get('year') == 2025])
+    new_movies_count = len([m for m in all_movies if m.get('year', 0) >= 2025])
 
     if not all_items:
         await callback.message.edit_text(
@@ -1772,7 +1772,7 @@ async def send_anime_movie(callback: CallbackQuery, bot: Bot):
 
 @router.callback_query(F.data.startswith("catalog:anime_series:new:"))
 async def show_anime_series_new(callback: CallbackQuery):
-    """Показати новинки аніме-серіалів (2025 року)"""
+    """Показати новинки аніме-серіалів (2025-2026 року)"""
 
     parts = callback.data.split(":")
     page = int(parts[3]) if len(parts) > 3 else 0
@@ -1780,10 +1780,10 @@ async def show_anime_series_new(callback: CallbackQuery):
     is_admin = callback.from_user.id in config.ADMIN_IDS
     series = await get_all_anime_series_list(include_hidden=is_admin)
 
-    new_series = [s for s in series if s.get('year') == 2025]
+    new_series = [s for s in series if s.get('year', 0) >= 2025]
 
     if not new_series:
-        await callback.answer("❌ Новинок аніме-серіалів 2025 року поки немає", show_alert=True)
+        await callback.answer("❌ Новинок аніме-серіалів 2025-2026 року поки немає", show_alert=True)
         return
 
     new_series.sort(key=lambda x: x.get('imdb_rating', 0), reverse=True)
@@ -1894,7 +1894,7 @@ async def show_anime_series(callback: CallbackQuery):
     is_admin = callback.from_user.id in config.ADMIN_IDS
     series = await get_all_anime_series_list(include_hidden=is_admin)
 
-    new_series_count = len([s for s in series if s.get('year') == 2025])
+    new_series_count = len([s for s in series if s.get('year', 0) >= 2025])
 
     if not series:
         await callback.message.edit_text(

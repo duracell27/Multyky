@@ -30,6 +30,27 @@ def is_admin(user_id: int) -> bool:
     return user_id in config.ADMIN_IDS
 
 
+# ── Кнопки після завершення ───────────────────────────────────────────────────
+
+@router.callback_query(F.data == "ad_add_new:series")
+async def process_ad_add_new(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔️ Тільки для адміністраторів.", show_alert=True)
+        return
+    await state.clear()
+    buttons = [
+        [InlineKeyboardButton(text="➕ Новий серіал", callback_data="ad_series_type:new")],
+        [InlineKeyboardButton(text="📺 Існуючий серіал", callback_data="ad_series_type:existing")],
+    ]
+    await callback.message.answer(
+        "🤖 <b>Автозавантаження серій</b>\n\n"
+        "Додати серії до нового чи існуючого серіалу?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await state.set_state(AutoDownloadStates.choosing_series_type)
+    await callback.answer()
+
+
 # ── /autoDownload ────────────────────────────────────────────────────────────
 
 @router.message(Command("autoDownload"))
