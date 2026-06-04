@@ -20,6 +20,25 @@ logger = logging.getLogger(__name__)
 _active_tasks: dict[str, asyncio.Task] = {}
 
 
+def _format_ep_range(nums: list[int]) -> str:
+    """Format a sorted list of episode numbers as a compact range string.
+    e.g. [1,2,3,5,6,10] → '1-3, 5-6, 10'
+    """
+    if not nums:
+        return ""
+    nums = sorted(nums)
+    ranges = []
+    start = end = nums[0]
+    for n in nums[1:]:
+        if n == end + 1:
+            end = n
+        else:
+            ranges.append(f"{start}-{end}" if start != end else str(start))
+            start = end = n
+    ranges.append(f"{start}-{end}" if start != end else str(start))
+    return ", ".join(ranges)
+
+
 def is_job_running(job_id: str) -> bool:
     task = _active_tasks.get(job_id)
     return task is not None and not task.done()
@@ -68,9 +87,23 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
         await set_job_status(job_id, "error")
         return
 
+    skipped_eps: list[int] = []
+
+    async def flush_skipped() -> None:
+        """Send a single summary message for buffered skipped episodes."""
+        if not skipped_eps:
+            return
+        if len(skipped_eps) == 1:
+            text = f"⏭ S{season}E{skipped_eps[0]} вже є в базі, пропущено"
+        else:
+            text = f"⏭ Вже є в базі, пропущено {len(skipped_eps)} серій: {_format_ep_range(skipped_eps)}"
+        await bot.send_message(admin_id, text)
+        skipped_eps.clear()
+
     for idx in range(start_from, total):
         # Check disk space before each episode
         if not await _check_disk():
+            await flush_skipped()
             await bot.send_message(
                 admin_id,
                 "❌ Менше 1GB вільного місця на диску. Завантаження зупинено."
@@ -81,6 +114,7 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
         # Check for cancellation before each episode
         fresh_job = await get_job(job_id)
         if fresh_job and fresh_job["status"] == "paused":
+            await flush_skipped()
             await bot.send_message(
                 admin_id,
                 f"⏹ Завантаження зупинено після серії {idx}. "
@@ -92,14 +126,14 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
         ep_num = episode_numbers[idx]
         output_path = f"/tmp/{job_id}_e{ep_num}.mp4"
 
-        # Skip episodes that are already in the database
+        # Skip episodes that are already in the database — buffer, don't send yet
         if await get_episode(series_id, season, ep_num):
             await update_job_progress(job_id, idx + 1)
-            await bot.send_message(
-                admin_id,
-                f"⏭ S{season}E{ep_num} вже є в базі, пропускаю ({ep_num}/{total})"
-            )
+            skipped_eps.append(ep_num)
             continue
+
+        # Flush skipped buffer before starting a real download
+        await flush_skipped()
 
         thumb_path = output_path + ".thumb.jpg"
         try:
@@ -176,6 +210,7 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
             if await asyncio.to_thread(os.path.exists, thumb_path):
                 await asyncio.to_thread(os.remove, thumb_path)
 
+    await flush_skipped()
     await set_job_status(job_id, "done")
 
     bot_info = await bot.get_me()
