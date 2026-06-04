@@ -11,6 +11,7 @@ async def create_job(
     episode_urls: list[str],
     admin_id: int,
     content_type: str = "series",
+    episode_numbers: list[int] | None = None,
 ) -> str:
     doc = {
         "series_id": series_id,
@@ -18,6 +19,7 @@ async def create_job(
         "season": season,
         "dubbing": dubbing,
         "episode_urls": episode_urls,
+        "episode_numbers": episode_numbers or list(range(1, len(episode_urls) + 1)),
         "total_episodes": len(episode_urls),
         "current_episode": 0,
         "status": "running",

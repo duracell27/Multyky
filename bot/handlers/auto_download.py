@@ -607,6 +607,7 @@ async def _confirm_dubbing(message, state: FSMContext, dubbing: str, edit: bool)
         return
 
     episode_urls = result["episode_urls"]
+    episode_numbers = result.get("episode_numbers") or list(range(1, len(episode_urls) + 1))
     if not episode_urls:
         await message.edit_text(
             f"⚠️ Серій для озвучки «{dubbing}» не знайдено. "
@@ -617,22 +618,44 @@ async def _confirm_dubbing(message, state: FSMContext, dubbing: str, edit: bool)
     await state.update_data(
         dubbing=dubbing,
         episode_urls=episode_urls,
+        episode_numbers=episode_numbers,
         total_episodes=len(episode_urls),
     )
+
+    season = data["season"]
+    series_title = data["series_title"]
+    total = len(episode_urls)
+
+    # Build episode list summary and detect gaps
+    nums_sorted = sorted(episode_numbers)
+    full_range = set(range(nums_sorted[0], nums_sorted[-1] + 1))
+    missing = sorted(full_range - set(nums_sorted))
+
+    ep_list = ", ".join(str(n) for n in nums_sorted)
+    if len(ep_list) > 200:
+        ep_list = ep_list[:197] + "..."
+
+    info_lines = [
+        f"📋 <b>Готово до завантаження:</b>\n",
+        f"📺 {series_title}",
+        f"📅 Сезон: {season}",
+        f"🎙 Озвучка: {dubbing}",
+        f"📼 Серій на сайті: {total} (№ {nums_sorted[0]}–{nums_sorted[-1]})",
+        f"📝 Номери: {ep_list}",
+    ]
+    if missing:
+        missing_str = ", ".join(str(n) for n in missing[:20])
+        if len(missing) > 20:
+            missing_str += f" (+{len(missing) - 20} ін.)"
+        info_lines.append(f"⚠️ Пропущені на сайті: {missing_str}")
+    info_lines.append("\nПочинаємо завантаження?")
 
     buttons = [
         [InlineKeyboardButton(text="▶️ Починаємо!", callback_data="ad_confirm:yes")],
         [InlineKeyboardButton(text="❌ Скасувати", callback_data="ad_confirm:no")],
     ]
-    season = data["season"]
-    series_title = data["series_title"]
     await message.edit_text(
-        f"📋 <b>Готово до завантаження:</b>\n\n"
-        f"📺 {series_title}\n"
-        f"📅 Сезон: {season}\n"
-        f"🎙 Озвучка: {dubbing}\n"
-        f"📼 Серій: {len(episode_urls)}\n\n"
-        f"Починаємо завантаження?",
+        "\n".join(info_lines),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
     )
     await state.set_state(AutoDownloadStates.confirming)
@@ -656,6 +679,7 @@ async def process_confirm(callback: CallbackQuery, state: FSMContext, bot: Bot):
         season=data["season"],
         dubbing=data["dubbing"],
         episode_urls=data["episode_urls"],
+        episode_numbers=data.get("episode_numbers"),
         admin_id=callback.from_user.id,
     )
 

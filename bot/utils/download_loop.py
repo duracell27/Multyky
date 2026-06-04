@@ -55,6 +55,7 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
     series_title = job["series_title"]
     season = job["season"]
     episode_urls = job["episode_urls"]
+    episode_numbers = job.get("episode_numbers") or list(range(1, len(episode_urls) + 1))
     total = job["total_episodes"]
     admin_id = job["admin_id"]
     start_from = job["current_episode"]  # resume support
@@ -88,7 +89,7 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
             return
 
         episode_url = episode_urls[idx]
-        ep_num = idx + 1
+        ep_num = episode_numbers[idx]
         output_path = f"/tmp/{job_id}_e{ep_num}.mp4"
 
         # Skip episodes that are already in the database

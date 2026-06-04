@@ -149,6 +149,29 @@ def _parse_playlist_html(html: str) -> dict:
     }
 
 
+def _extract_episode_number(title: str) -> Optional[int]:
+    """Try to extract a real episode number from a playlist title string.
+
+    Handles formats like: 'Серія 36', '36 серія', 'Episode 5', '12.', '12', etc.
+    Returns None if no number can be reliably extracted.
+    """
+    if not title:
+        return None
+    # "Серія 36" / "серія 36" / "Episode 36"
+    m = re.search(r'(?:серія|series|episode)\s*(\d+)', title, re.I)
+    if m:
+        return int(m.group(1))
+    # "36 серія" / "36 series"
+    m = re.search(r'(\d+)\s*(?:серія|series|episode)', title, re.I)
+    if m:
+        return int(m.group(1))
+    # Bare number, possibly with a dot: "36" / "36."
+    m = re.fullmatch(r'\s*(\d+)\.?\s*', title)
+    if m:
+        return int(m.group(1))
+    return None
+
+
 def _sync_parse_season_page(url: str, dubbing: str) -> dict:
     html = _get_playlist_html(url)
     parsed = _parse_playlist_html(html)
@@ -158,34 +181,41 @@ def _sync_parse_season_page(url: str, dubbing: str) -> dict:
 
     # Empty dubbing string means caller only wants the dubbings list (no episode filtering).
     if not dubbing:
-        return {"dubbings": dubbings, "episode_urls": []}
+        return {"dubbings": dubbings, "episode_urls": [], "episode_numbers": []}
 
     # Match episodes for the requested dubbing
     # Strategy: match by data-voice field (exact), then fallback to dubbing_ids
-    episode_urls: list[str] = []
+    matched: list[dict] = []
 
-    # Try matching by voice name first
-    matched_by_voice = [ep["file"] for ep in episodes if ep["voice"] == dubbing]
+    matched_by_voice = [ep for ep in episodes if ep["voice"] == dubbing]
     if matched_by_voice:
-        episode_urls = matched_by_voice
+        matched = matched_by_voice
     else:
-        # Fallback: match by data_id
         target_id = parsed["dubbing_ids"].get(dubbing)
         if target_id:
-            episode_urls = [ep["file"] for ep in episodes if ep["data_id"] == target_id]
+            matched = [ep for ep in episodes if ep["data_id"] == target_id]
 
-    if not episode_urls and dubbing not in parsed["dubbing_ids"]:
+    if not matched and dubbing not in parsed["dubbing_ids"]:
         raise ValueError(
             f"Dubbing {dubbing!r} not found. Available: {dubbings}"
         )
 
-    if not episode_urls:
+    if not matched:
         raise ValueError(
             f"Dubbing '{dubbing}' found on page but returned 0 episodes. "
             f"Available dubbings: {dubbings}"
         )
 
-    return {"dubbings": dubbings, "episode_urls": episode_urls}
+    episode_urls = [ep["file"] for ep in matched]
+
+    # Extract real episode numbers from titles; fall back to 1-based sequential
+    raw_numbers = [_extract_episode_number(ep.get("title", "")) for ep in matched]
+    if all(n is not None for n in raw_numbers):
+        episode_numbers = raw_numbers
+    else:
+        episode_numbers = list(range(1, len(matched) + 1))
+
+    return {"dubbings": dubbings, "episode_urls": episode_urls, "episode_numbers": episode_numbers}
 
 
 def _resolve_best_quality_m3u8(master_url: str) -> str:
