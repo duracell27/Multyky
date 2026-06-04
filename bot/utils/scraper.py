@@ -635,40 +635,46 @@ def _sync_get_movie_m3u8(url: str, dubbing: str) -> str:
 # Public async API
 # ---------------------------------------------------------------------------
 
-async def get_dubbing_options(url: str) -> list[str]:
-    """Return the list of dubbing names available on the season page.
-
-    Delegates to parse_season_page with an empty dubbing to avoid a
-    redundant HTTP round-trip when the caller later calls parse_season_page.
-    """
-    result = await parse_season_page(url, dubbing="")
+async def get_dubbing_options(url: str, season: int = None) -> list[str]:
+    """Return dubbing names for the given URL.
+    For uafix.net series, `season` is required to fetch the first episode."""
+    result = await parse_season_page(url, dubbing="", season=season)
     return result["dubbings"]
 
 
-async def parse_season_page(url: str, dubbing: str) -> dict:
+async def parse_season_page(url: str, dubbing: str, season: int = None) -> dict:
     """
-    Return {"dubbings": [str], "episode_urls": [str]}.
-    episode_urls are ordered episode player URLs for the chosen dubbing.
-    Pass dubbing="" to retrieve only the dubbings list without episode filtering.
+    Return {"dubbings": [str], "episode_urls": [str], "episode_numbers": [int]}.
+    Pass dubbing="" to retrieve only the dubbings list.
+    For uafix.net series, pass season=N to filter episodes.
     """
     loop = asyncio.get_running_loop()
+    if _detect_site(url) == "uafix":
+        if season is None:
+            raise ValueError("season is required for uafix.net series")
+        return await loop.run_in_executor(
+            None, partial(_sync_parse_uafix_series_page, url, season, dubbing)
+        )
     return await loop.run_in_executor(None, partial(_sync_parse_season_page, url, dubbing))
 
 
-async def get_m3u8_url(episode_url: str) -> str:
-    """Fetch the episode player page and extract the HLS m3u8 URL."""
+async def get_m3u8_url(episode_url: str, dubbing: Optional[str] = None) -> str:
+    """Fetch the episode player page and extract the HLS m3u8 URL.
+    For uafix.net ashdi serial URLs, dubbing is required to pick the right stream."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, partial(_sync_get_m3u8_url, episode_url))
+    return await loop.run_in_executor(
+        None, partial(_sync_get_m3u8_url, episode_url, dubbing)
+    )
 
 
 async def parse_movie_page(url: str) -> dict:
     """
-    Parse a uakino.best movie page.
-    Returns {title, title_en, year, imdb, poster_url, dubbings}.
-    Any field may be None if not found.
-    Handles both direct-iframe and AJAX-playlist page variants.
+    Parse a movie/series page. Returns {title, title_en, year, imdb, poster_url, dubbings}.
+    Routes to uafix or uakino implementation based on domain.
     """
     loop = asyncio.get_running_loop()
+    if _detect_site(url) == "uafix":
+        return await loop.run_in_executor(None, partial(_sync_parse_uafix_movie_page, url))
     return await loop.run_in_executor(None, partial(_sync_parse_movie_page, url))
 
 
@@ -683,9 +689,11 @@ async def download_poster(poster_url: str, output_path: str) -> bool:
 async def get_movie_m3u8(url: str, dubbing: str) -> str:
     """
     Get m3u8 URL for the given dubbing from a movie page.
-    Handles both direct-iframe and AJAX-playlist page variants.
+    For uafix.net, dubbing is ignored (single stream).
     """
     loop = asyncio.get_running_loop()
+    if _detect_site(url) == "uafix":
+        return await loop.run_in_executor(None, partial(_sync_get_uafix_movie_m3u8, url))
     return await loop.run_in_executor(
         None, partial(_sync_get_movie_m3u8, url, dubbing)
     )
