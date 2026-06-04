@@ -128,6 +128,7 @@ class PostToChannelStates(StatesGroup):
 
 class AutoDownloadStates(StatesGroup):
     """Стани для автоматичного завантаження серій"""
+    choosing_site = State()
     choosing_series_type = State()
     # новий серіал — через URL
     waiting_for_new_series_url = State()
@@ -149,6 +150,7 @@ class AutoDownloadStates(StatesGroup):
 
 class AutoMovieStates(StatesGroup):
     """Стани для автоматичного завантаження фільму"""
+    choosing_site = State()
     waiting_for_url = State()
     confirming_metadata = State()
     # ручне заповнення (якщо парсинг неповний або адмін відмовився)
@@ -170,6 +172,7 @@ class AutoMovieStates(StatesGroup):
 
 class AutoAnimeMovieStates(StatesGroup):
     """Стани для автоматичного завантаження аніме-фільму"""
+    choosing_site = State()
     waiting_for_url = State()
     confirming_metadata = State()
     waiting_for_title_manual = State()
@@ -187,6 +190,7 @@ class AutoAnimeMovieStates(StatesGroup):
 
 class AutoAnimeDownloadStates(StatesGroup):
     """Стани для автоматичного завантаження аніме-серіалу"""
+    choosing_site = State()
     choosing_series_type = State()
     waiting_for_new_series_url = State()
     confirming_new_series_metadata = State()
