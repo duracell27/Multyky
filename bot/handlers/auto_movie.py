@@ -37,11 +37,27 @@ async def cmd_auto_movie(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await message.answer("⛔️ Тільки для адміністраторів.")
         return
+    buttons = [
+        [InlineKeyboardButton(text="🎬 uakino.best", callback_data="am_site:uakino")],
+        [InlineKeyboardButton(text="🌐 uafix.net", callback_data="am_site:uafix")],
+    ]
     await message.answer(
-        "🎬 <b>Автозавантаження фільму</b>\n\n"
-        "Надішли URL фільму з uakino.best:"
+        "🎬 <b>Автозавантаження фільму</b>\n\nЗ якого сайту завантажити?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await state.set_state(AutoMovieStates.choosing_site)
+
+
+@router.callback_query(AutoMovieStates.choosing_site, F.data.startswith("am_site:"))
+async def process_movie_site_choice(callback: CallbackQuery, state: FSMContext):
+    site = callback.data.split(":")[1]
+    await state.update_data(site=site)
+    site_name = "uakino.best" if site == "uakino" else "uafix.net"
+    await callback.message.edit_text(
+        f"🎬 <b>Автозавантаження фільму</b>\n\nНадішли URL фільму з {site_name}:"
     )
     await state.set_state(AutoMovieStates.waiting_for_url)
+    await callback.answer()
 
 
 # ── URL → парсинг ────────────────────────────────────────────────────────────
@@ -49,8 +65,11 @@ async def cmd_auto_movie(message: Message, state: FSMContext):
 @router.message(AutoMovieStates.waiting_for_url, ~F.text.startswith("/"))
 async def process_movie_url(message: Message, state: FSMContext):
     url = message.text.strip()
-    if "uakino.best" not in url:
-        await message.answer("❌ URL має містити uakino.best. Спробуй ще раз:")
+    data = await state.get_data()
+    site = data.get("site", "uakino")
+    allowed = "uakino.best" if site == "uakino" else "uafix.net"
+    if allowed not in url:
+        await message.answer(f"❌ URL має містити {allowed}. Спробуй ще раз:")
         return
 
     await state.update_data(movie_url=url)
@@ -210,10 +229,15 @@ async def process_add_new(callback: CallbackQuery, state: FSMContext):
     kind = callback.data.split(":")[1]
     await state.clear()
     if kind == "movie":
+        buttons = [
+            [InlineKeyboardButton(text="🎬 uakino.best", callback_data="am_site:uakino")],
+            [InlineKeyboardButton(text="🌐 uafix.net", callback_data="am_site:uafix")],
+        ]
         await callback.message.answer(
-            "🎬 <b>Автозавантаження фільму</b>\n\nНадішли URL фільму з uakino.best:"
+            "🎬 <b>Автозавантаження фільму</b>\n\nЗ якого сайту завантажити?",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
-        await state.set_state(AutoMovieStates.waiting_for_url)
+        await state.set_state(AutoMovieStates.choosing_site)
     else:
         await callback.message.answer(
             "📺 Скористайся командою /autoDownload для додавання серіалу."
