@@ -12,10 +12,12 @@ Flow:
 """
 
 import asyncio
+import json
 import logging
 import re
 from functools import partial
 from typing import Optional
+from urllib.parse import urlparse, parse_qs
 
 logger = logging.getLogger(__name__)
 
@@ -258,16 +260,81 @@ def _resolve_best_quality_m3u8(master_url: str) -> str:
     return master_url
 
 
-def _sync_get_m3u8_url(episode_url: str) -> str:
+def _sync_get_ashdi_serial_m3u8(serial_url: str, dubbing: Optional[str]) -> str:
     """
-    Fetch an ashdi.vip episode page and extract the m3u8 URL from the
-    Playerjs({..., file:'<url>.m3u8', ...}) script block.
+    Fetch ashdi.vip/serial/<id>?season=N&episode=M, parse the Playerjs JSON,
+    find the correct dubbing/season/episode, return m3u8 URL.
+
+    JSON structure:
+      [{"title":"DubName","folder":[{"title":"Сезон N","folder":[
+          {"title":"Серія M","file":"m3u8_url",...}
+      ]}]},...]
+    """
+    parsed_url = urlparse(serial_url)
+    params = parse_qs(parsed_url.query)
+    season_num = int(params.get("season", [1])[0])
+    episode_num = int(params.get("episode", [1])[0])
+
+    resp = _fetch(serial_url, referer="https://uafix.net/")
+    text = resp.text
+
+    json_match = re.search(r"file\s*:\s*'(\[.*?\])'", text, re.DOTALL)
+    if not json_match:
+        raise ValueError(f"No Playerjs JSON found on ashdi serial page: {serial_url}")
+
+    data = json.loads(json_match.group(1))
+
+    if dubbing:
+        dub_entry = next(
+            (d for d in data if d.get("title", "").strip() == dubbing), None
+        )
+        if dub_entry is None:
+            available = [d.get("title", "").strip() for d in data]
+            raise ValueError(f"Dubbing {dubbing!r} not found. Available: {available}")
+    else:
+        dub_entry = data[0] if data else None
+
+    if not dub_entry:
+        raise ValueError(f"No dubbing entries in ashdi serial page: {serial_url}")
+
+    seasons_folder = dub_entry.get("folder", [])
+    season_entry = next(
+        (s for s in seasons_folder if re.search(rf"\b{season_num}\b", s.get("title", ""))),
+        seasons_folder[0] if seasons_folder else None,
+    )
+    if not season_entry:
+        raise ValueError(f"Season {season_num} not found for dubbing '{dubbing}'")
+
+    episodes_folder = season_entry.get("folder", [])
+    ep_entry = next(
+        (e for e in episodes_folder if re.search(rf"\b{episode_num}\b", e.get("title", ""))),
+        episodes_folder[0] if episodes_folder else None,
+    )
+    if not ep_entry:
+        raise ValueError(f"Episode {episode_num} not found in season {season_num} for dubbing '{dubbing}'")
+
+    m3u8_url = ep_entry.get("file", "")
+    if not m3u8_url:
+        raise ValueError(f"No file URL in episode entry for {serial_url}")
+
+    return _resolve_best_quality_m3u8(m3u8_url)
+
+
+def _sync_get_m3u8_url(episode_url: str, dubbing: Optional[str] = None) -> str:
+    """
+    Fetch an episode player page and extract the HLS m3u8 URL.
+
+    Handles two URL types:
+      • ashdi.vip/serial/<id>?season=N&episode=M  — uafix.net series; dubbing required
+      • ashdi.vip/vod/<id>                        — uakino.best; dubbing ignored
     Resolves master playlists to the highest-bandwidth variant.
     """
+    if "ashdi.vip/serial/" in episode_url:
+        return _sync_get_ashdi_serial_m3u8(episode_url, dubbing)
+
     resp = _fetch(episode_url, referer="https://uakino.best/")
     text = resp.text
 
-    # Pattern: file:'<url>.m3u8'  (single or double quotes)
     m3u8_match = re.search(
         r"""file\s*:\s*['"]((https?:)?//[^'"]+\.m3u8)['"]""",
         text,
@@ -452,6 +519,71 @@ def _sync_get_uafix_movie_m3u8(url: str) -> str:
         raise ValueError(f"No m3u8 URL found on zetvideo page: {zetvideo_url}")
 
     return _resolve_best_quality_m3u8(_make_absolute(m3u8_match.group(1)))
+
+
+def _sync_parse_uafix_series_page(url: str, season: int, dubbing: str) -> dict:
+    """
+    Parse a uafix.net series page (e.g. https://uafix.net/serials/rik-ta-morti/).
+
+    When dubbing == "":
+      Returns {"dubbings": [...], "episode_urls": [], "episode_numbers": []}.
+      Fetches the first episode of `season` to read available dubbings from ashdi JSON.
+
+    When dubbing != "":
+      Returns {"dubbings": [], "episode_urls": [...ashdi serial URLs...], "episode_numbers": [...]}.
+      episode_urls are ashdi.vip/serial/<id>?season=N&episode=M for each episode.
+    """
+    resp = _fetch(url)
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    season_pat = re.compile(r"season-(\d+)-episode-(\d+)", re.I)
+    seen_eps: dict[int, str] = {}
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if not href.startswith("http"):
+            href = "https://uafix.net" + href if href.startswith("/") else href
+        m = season_pat.search(href)
+        if m and int(m.group(1)) == season:
+            ep_num = int(m.group(2))
+            if ep_num not in seen_eps:
+                seen_eps[ep_num] = href
+
+    if not seen_eps:
+        raise ValueError(f"No episodes found for season {season} on page: {url}")
+
+    sorted_eps = sorted(seen_eps.items())  # [(ep_num, page_url), ...]
+
+    # Fetch the first episode page to get the ashdi serial ID
+    first_ep_page = sorted_eps[0][1]
+    resp2 = _fetch(first_ep_page)
+    soup2 = BeautifulSoup(resp2.text, "html.parser")
+    iframe = soup2.find("iframe", src=re.compile(r"ashdi\.vip/serial/", re.I))
+    if not iframe:
+        raise ValueError(f"No ashdi serial iframe on episode page: {first_ep_page}")
+
+    ashdi_src = _make_absolute(iframe["src"])
+    sid_match = re.search(r"ashdi\.vip/serial/(\d+)", ashdi_src)
+    if not sid_match:
+        raise ValueError(f"Cannot extract serial ID from: {ashdi_src}")
+    serial_id = sid_match.group(1)
+
+    episode_numbers = [ep_num for ep_num, _ in sorted_eps]
+
+    if not dubbing:
+        first_ashdi = f"https://ashdi.vip/serial/{serial_id}?season={season}&episode={episode_numbers[0]}"
+        resp3 = _fetch(first_ashdi, referer=url)
+        json_match = re.search(r"file\s*:\s*'(\[.*?\])'", resp3.text, re.DOTALL)
+        if not json_match:
+            raise ValueError(f"No Playerjs JSON on ashdi serial page: {first_ashdi}")
+        data = json.loads(json_match.group(1))
+        dubbings = [d.get("title", "").strip() for d in data if d.get("title", "").strip()]
+        return {"dubbings": dubbings, "episode_urls": [], "episode_numbers": []}
+
+    episode_urls = [
+        f"https://ashdi.vip/serial/{serial_id}?season={season}&episode={ep_num}"
+        for ep_num in episode_numbers
+    ]
+    return {"dubbings": [], "episode_urls": episode_urls, "episode_numbers": episode_numbers}
 
 
 def _sync_get_movie_m3u8(url: str, dubbing: str) -> str:
