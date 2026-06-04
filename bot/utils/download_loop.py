@@ -104,7 +104,7 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
         thumb_path = output_path + ".thumb.jpg"
         try:
             # 1. Get m3u8
-            m3u8_url = await get_m3u8_url(episode_url)
+            m3u8_url = await get_m3u8_url(episode_url, dubbing=job.get("dubbing"))
 
             # 2. Download + remux with faststart (auto-compresses if > 1.9 GB)
             was_compressed = await run_ffmpeg(m3u8_url, output_path)
