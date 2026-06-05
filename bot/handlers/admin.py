@@ -13,7 +13,8 @@ from bot.config import config
 from bot.states import (
     AddMovieStates, AddBatchMovieStates, DeleteContentStates,
     EditContentStates, AddSuperBatchMovieStates,
-    AddAnimeMovieStates, AddAnimeBatchStates, PostToChannelStates
+    AddAnimeMovieStates, AddAnimeBatchStates, PostToChannelStates,
+    SeriesOngoingStates,
 )
 from bot.database.movies import (
     add_episode_to_series,
@@ -42,7 +43,10 @@ from bot.database.movies import (
     get_all_anime_series_list,
     search_anime_movie_series_names,
     get_all_anime_movie_series_names,
-    get_anime_movies_by_series_name
+    get_anime_movies_by_series_name,
+    set_series_ongoing,
+    set_series_completed,
+    set_series_url,
 )
 from bot.database.users import update_last_series_added
 from bot.database.scheduled_posts import create_scheduled_post, get_all_scheduled_posts, delete_scheduled_post
@@ -4248,3 +4252,207 @@ async def delete_scheduled_post_handler(callback: CallbackQuery):
         await callback.message.delete()
     else:
         await callback.answer("❌ Не знайдено", show_alert=True)
+
+
+# ── Series ongoing status ─────────────────────────────────────────────────────
+
+def _series_status_keyboard(content_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Завершений", callback_data=f"set_completed:{content_id}"),
+            InlineKeyboardButton(text="🔄 Незавершений", callback_data=f"set_ongoing:{content_id}"),
+        ],
+        [InlineKeyboardButton(text="✏️ Змінити URL", callback_data=f"edit_source_url:{content_id}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"editseries_back:{content_id}")],
+    ])
+
+
+async def _show_series_status(target, content_id: str) -> None:
+    """Показати екран статусу серіалу. target — CallbackQuery."""
+    content = await get_movie_by_id(content_id)
+    if not content:
+        await target.answer("❌ Не знайдено", show_alert=True)
+        return
+
+    is_ongoing = content.get("ongoing", False)
+    source_url = content.get("source_url") or "—"
+    source_dubbing = content.get("source_dubbing") or "—"
+    status_text = "🔄 Незавершений" if is_ongoing else "✅ Завершений"
+
+    text = (
+        f"📡 <b>Статус серіалу</b>\n\n"
+        f"📺 <b>{content['title']}</b>\n"
+        f"Статус: {status_text}\n"
+        f"URL: <code>{source_url}</code>\n"
+        f"Озвучка: {source_dubbing}\n\n"
+        f"Оберіть дію:"
+    )
+    await target.message.edit_text(text, reply_markup=_series_status_keyboard(content_id))
+    await target.answer()
+
+
+@router.callback_query(F.data.startswith("series_status:"))
+async def show_series_status(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔️", show_alert=True)
+        return
+    content_id = callback.data.split(":", 1)[1]
+    await _show_series_status(callback, content_id)
+
+
+@router.callback_query(F.data.startswith("set_completed:"))
+async def set_series_completed_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔️", show_alert=True)
+        return
+    content_id = callback.data.split(":", 1)[1]
+    await set_series_completed(content_id)
+    await callback.answer("✅ Серіал позначено як завершений")
+    await _show_series_status(callback, content_id)
+
+
+@router.callback_query(F.data.startswith("set_ongoing:"))
+async def set_series_ongoing_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔️", show_alert=True)
+        return
+    content_id = callback.data.split(":", 1)[1]
+    content = await get_movie_by_id(content_id)
+    if not content:
+        await callback.answer("❌", show_alert=True)
+        return
+
+    if content.get("source_url"):
+        await set_series_ongoing(
+            content_id,
+            content["source_url"],
+            content.get("source_dubbing", "")
+        )
+        await callback.answer("🔄 Серіал позначено як незавершений")
+        await _show_series_status(callback, content_id)
+    else:
+        await state.update_data(ongoing_series_id=content_id, ongoing_action="set_ongoing")
+        await callback.message.edit_text(
+            "📡 <b>Джерело для оновлень</b>\n\nНадішли URL серіалу з uakino.best або uafix.net:"
+        )
+        await state.set_state(SeriesOngoingStates.waiting_for_source_url)
+        await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edit_source_url:"))
+async def edit_source_url_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔️", show_alert=True)
+        return
+    content_id = callback.data.split(":", 1)[1]
+    await state.update_data(ongoing_series_id=content_id, ongoing_action="edit_url")
+    await callback.message.edit_text(
+        "✏️ <b>Змінити URL</b>\n\nНадішли новий URL серіалу з uakino.best або uafix.net:"
+    )
+    await state.set_state(SeriesOngoingStates.waiting_for_source_url)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("editseries_back:"))
+async def editseries_back_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    """Повернутись до головного меню редагування серіалу."""
+    content_id = callback.data.split(":", 1)[1]
+    content = await get_movie_by_id(content_id)
+    if not content:
+        await callback.answer("❌", show_alert=True)
+        return
+
+    is_hidden = content.get("is_hidden", False)
+    visibility_text = "👁 Показати" if is_hidden else "🔒 Приховати"
+    visibility_status = "🔒 <b>ПРИХОВАНИЙ</b>" if is_hidden else "👁 Видимий"
+
+    buttons = [
+        [InlineKeyboardButton(text="📝 Українська назва", callback_data=f"editfield:title:{content_id}")],
+        [InlineKeyboardButton(text="🔤 Англійська назва", callback_data=f"editfield:title_en:{content_id}")],
+        [InlineKeyboardButton(text="📅 Рік", callback_data=f"editfield:year:{content_id}")],
+        [InlineKeyboardButton(text="⭐️ IMDB рейтинг", callback_data=f"editfield:imdb_rating:{content_id}")],
+        [InlineKeyboardButton(text="🖼 Замінити постер", callback_data=f"editfield:poster:{content_id}")],
+        [InlineKeyboardButton(text="📺 Замінити серію", callback_data=f"editfield:episode_video:{content_id}")],
+        [InlineKeyboardButton(text="🔄 Тип контенту", callback_data=f"editfield:content_type:{content_id}")],
+        [InlineKeyboardButton(text=visibility_text, callback_data=f"toggle_visibility:{content_id}")],
+    ]
+    is_ongoing = content.get("ongoing", False)
+    ongoing_label = "🔄 Незавершений ✓" if is_ongoing else "✅ Завершений"
+    buttons.append([InlineKeyboardButton(
+        text=f"📡 Статус: {ongoing_label}",
+        callback_data=f"series_status:{content_id}"
+    )])
+    buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="editfield:cancel")])
+
+    await callback.message.edit_text(
+        f"✏️ <b>Редагування:</b>\n\n"
+        f"📺 <b>{content['title']}</b>\n"
+        f"Англійська назва: {content.get('title_en', '')}\n"
+        f"📅 Рік: {content.get('year', '')}\n"
+        f"⭐️ IMDB: {content.get('imdb_rating', '')}\n"
+        f"Статус: {visibility_status}\n\n"
+        f"Оберіть поле для редагування:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await state.set_state(EditContentStates.choosing_field)
+    await callback.answer()
+
+
+@router.message(SeriesOngoingStates.waiting_for_source_url)
+async def process_source_url(message: Message, state: FSMContext) -> None:
+    url = message.text.strip() if message.text else ""
+    if "uakino.best" not in url and "uafix.net" not in url:
+        await message.answer("❌ URL має містити uakino.best або uafix.net. Спробуй ще раз:")
+        return
+
+    data = await state.get_data()
+    series_id = data["ongoing_series_id"]
+    await state.update_data(source_url=url)
+
+    await message.answer("⏳ Отримую список озвучок...")
+    try:
+        from bot.utils.scraper import get_dubbing_options
+        if "uafix.net" in url:
+            content = await get_movie_by_id(series_id)
+            seasons = content.get("seasons", {}) if content else {}
+            max_season = max((int(s) for s in seasons.keys()), default=1)
+            dubbings = await get_dubbing_options(url, season=max_season)
+        else:
+            dubbings = await get_dubbing_options(url)
+
+        if not dubbings:
+            await message.answer("❌ Не вдалось отримати озвучки. Перевір URL і спробуй ще раз:")
+            return
+
+        await state.update_data(source_dubbings=dubbings)
+        buttons = [
+            [InlineKeyboardButton(text=d, callback_data=f"pick_src_dubbing:{d}")]
+            for d in dubbings
+        ]
+        await message.answer(
+            "🎙 Оберіть озвучку для відстеження оновлень:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+        await state.set_state(SeriesOngoingStates.choosing_dubbing)
+    except Exception as e:
+        await message.answer(f"❌ Помилка при парсингу: {e}\nСпробуй інший URL:")
+
+
+@router.callback_query(SeriesOngoingStates.choosing_dubbing, F.data.startswith("pick_src_dubbing:"))
+async def pick_source_dubbing(callback: CallbackQuery, state: FSMContext) -> None:
+    dubbing = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    series_id = data["ongoing_series_id"]
+    url = data["source_url"]
+    action = data.get("ongoing_action", "edit_url")
+
+    if action == "set_ongoing":
+        await set_series_ongoing(series_id, url, dubbing)
+    else:
+        await set_series_url(series_id, url, dubbing)
+
+    await state.clear()
+    await callback.message.edit_text(
+        f"✅ Збережено!\n\nURL: <code>{url}</code>\nОзвучка: {dubbing}"
+    )
+    await callback.answer()
