@@ -4356,6 +4356,9 @@ async def edit_source_url_handler(callback: CallbackQuery, state: FSMContext) ->
 @router.callback_query(F.data.startswith("editseries_back:"))
 async def editseries_back_handler(callback: CallbackQuery, state: FSMContext) -> None:
     """Повернутись до головного меню редагування серіалу."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔️", show_alert=True)
+        return
     content_id = callback.data.split(":", 1)[1]
     content = await get_movie_by_id(content_id)
     if not content:
@@ -4436,10 +4439,14 @@ async def process_source_url(message: Message, state: FSMContext) -> None:
         await state.set_state(SeriesOngoingStates.choosing_dubbing)
     except Exception as e:
         await message.answer(f"❌ Помилка при парсингу: {e}\nСпробуй інший URL:")
+        await state.set_state(SeriesOngoingStates.waiting_for_source_url)
 
 
 @router.callback_query(SeriesOngoingStates.choosing_dubbing, F.data.startswith("pick_src_dubbing:"))
 async def pick_source_dubbing(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔️", show_alert=True)
+        return
     dubbing = callback.data.split(":", 1)[1]
     data = await state.get_data()
     series_id = data["ongoing_series_id"]
