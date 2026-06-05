@@ -9,6 +9,7 @@ from bot.database.movies import (
     get_all_series_list,
     get_series_seasons,
     get_series_episodes,
+    get_season_episodes,
     get_episode,
     get_movie_by_title,
     get_movie_by_id,
