@@ -4409,7 +4409,11 @@ async def process_source_url(message: Message, state: FSMContext) -> None:
         return
 
     data = await state.get_data()
-    series_id = data["ongoing_series_id"]
+    series_id = data.get("ongoing_series_id")
+    if not series_id:
+        await state.clear()
+        await message.answer("❌ Сесія застаріла. Почни заново.")
+        return
     await state.update_data(source_url=url)
 
     await message.answer("⏳ Отримую список озвучок...")
@@ -4429,8 +4433,8 @@ async def process_source_url(message: Message, state: FSMContext) -> None:
 
         await state.update_data(source_dubbings=dubbings)
         buttons = [
-            [InlineKeyboardButton(text=d, callback_data=f"pick_src_dubbing:{d}")]
-            for d in dubbings
+            [InlineKeyboardButton(text=d, callback_data=f"pick_src_dubbing:{i}")]
+            for i, d in enumerate(dubbings)
         ]
         await message.answer(
             "🎙 Оберіть озвучку для відстеження оновлень:",
@@ -4447,10 +4451,19 @@ async def pick_source_dubbing(callback: CallbackQuery, state: FSMContext) -> Non
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔️", show_alert=True)
         return
-    dubbing = callback.data.split(":", 1)[1]
+    idx = int(callback.data.split(":", 1)[1])
     data = await state.get_data()
-    series_id = data["ongoing_series_id"]
-    url = data["source_url"]
+    series_id = data.get("ongoing_series_id")
+    url = data.get("source_url")
+    if not series_id or not url:
+        await state.clear()
+        await callback.answer("❌ Сесія застаріла. Спробуй ще раз.", show_alert=True)
+        return
+    dubbings = data.get("source_dubbings", [])
+    if idx >= len(dubbings):
+        await callback.answer("❌ Невірний вибір.", show_alert=True)
+        return
+    dubbing = dubbings[idx]
     action = data.get("ongoing_action", "edit_url")
 
     if action == "set_ongoing":
