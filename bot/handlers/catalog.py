@@ -980,29 +980,29 @@ async def send_episode(callback: CallbackQuery, bot: Bot):
         current_episode = episode['episode']
 
         # Перевіряємо чи є наступна серія в поточному сезоні
-        next_episode = await get_episode(series_id, current_season, current_episode + 1)
+        next_result = await _next_ep_in_season(series_id, current_season, current_episode)
 
         # Створюємо кнопку для наступної серії
         buttons = []
-        if next_episode:
-            # Є наступна серія в поточному сезоні
+        if next_result:
+            next_num, _ = next_result
             buttons.append([
                 InlineKeyboardButton(
-                    text=f"▶️ Наступна серія {current_episode + 1}",
-                    callback_data=f"e:{series_id}:{current_season}:{current_episode + 1}"
+                    text=f"▶️ Наступна серія {next_num}",
+                    callback_data=f"e:{series_id}:{current_season}:{next_num}"
                 )
             ])
         else:
             # Перевіряємо чи є наступний сезон
             all_seasons = await get_series_seasons(series_id)
             if current_season + 1 in all_seasons:
-                # Перевіряємо чи є перша серія наступного сезону
-                first_episode = await get_episode(series_id, current_season + 1, 1)
-                if first_episode:
+                first_result = await _first_ep_in_season(series_id, current_season + 1)
+                if first_result:
+                    first_num, _ = first_result
                     buttons.append([
                         InlineKeyboardButton(
-                            text=f"▶️ Сезон {current_season + 1}, Серія 1",
-                            callback_data=f"e:{series_id}:{current_season + 1}:1"
+                            text=f"▶️ Сезон {current_season + 1}, Серія {first_num}",
+                            callback_data=f"e:{series_id}:{current_season + 1}:{first_num}"
                         )
                     ])
 
@@ -2211,29 +2211,29 @@ async def send_anime_episode(callback: CallbackQuery, bot: Bot):
         current_episode = episode
 
         # Перевіряємо чи є наступна серія в поточному сезоні
-        next_episode = await get_episode(series_id, current_season, current_episode + 1)
+        next_result = await _next_ep_in_season(series_id, current_season, current_episode)
 
         # Створюємо кнопку для наступної серії
         buttons = []
-        if next_episode:
-            # Є наступна серія в поточному сезоні
+        if next_result:
+            next_num, _ = next_result
             buttons.append([
                 InlineKeyboardButton(
-                    text=f"▶️ Наступна серія {current_episode + 1}",
-                    callback_data=f"ae:{series_id}:{current_season}:{current_episode + 1}"
+                    text=f"▶️ Наступна серія {next_num}",
+                    callback_data=f"ae:{series_id}:{current_season}:{next_num}"
                 )
             ])
         else:
             # Перевіряємо чи є наступний сезон
             all_seasons = await get_series_seasons(series_id)
             if current_season + 1 in all_seasons:
-                # Перевіряємо чи є перша серія наступного сезону
-                first_episode = await get_episode(series_id, current_season + 1, 1)
-                if first_episode:
+                first_result = await _first_ep_in_season(series_id, current_season + 1)
+                if first_result:
+                    first_num, _ = first_result
                     buttons.append([
                         InlineKeyboardButton(
-                            text=f"▶️ Сезон {current_season + 1}, Серія 1",
-                            callback_data=f"ae:{series_id}:{current_season + 1}:1"
+                            text=f"▶️ Сезон {current_season + 1}, Серія {first_num}",
+                            callback_data=f"ae:{series_id}:{current_season + 1}:{first_num}"
                         )
                     ])
 
@@ -2333,6 +2333,25 @@ async def process_episode_jump(message: Message, state: FSMContext, bot: Bot):
     await _send_episode_by_data(message, bot, series_id, season, ep_num, episode_data, kind=kind)
 
 
+async def _next_ep_in_season(series_id: str, season: int, current_ep: int):
+    """Повертає (ep_num, ep_data) для першого епізоду після current_ep у сезоні, або None."""
+    season_eps = await get_season_episodes(series_id, season)
+    candidates = sorted(n for n in season_eps if n > current_ep)
+    if candidates:
+        ep_num = candidates[0]
+        return ep_num, season_eps[ep_num]
+    return None
+
+
+async def _first_ep_in_season(series_id: str, season: int):
+    """Повертає (ep_num, ep_data) для першого (мінімального) епізоду сезону, або None."""
+    season_eps = await get_season_episodes(series_id, season)
+    if not season_eps:
+        return None
+    ep_num = min(season_eps)
+    return ep_num, season_eps[ep_num]
+
+
 async def _send_episode_by_data(message: Message, bot: Bot, series_id: str, season: int,
                                  ep_num: int, episode_data: dict, kind: str):
     """Відправити серію користувачу за даними епізоду (з кнопкою наступної серії)."""
@@ -2374,20 +2393,22 @@ async def _send_episode_by_data(message: Message, bot: Bot, series_id: str, seas
 
         # Кнопка наступної серії — та сама логіка що в send_episode / send_anime_episode
         buttons = []
-        next_ep = await get_episode(series_id, season, ep_num + 1)
-        if next_ep:
+        next_result = await _next_ep_in_season(series_id, season, ep_num)
+        if next_result:
+            next_num, _ = next_result
             buttons.append([InlineKeyboardButton(
-                text=f"▶️ Наступна серія {ep_num + 1}",
-                callback_data=f"{ep_cb}:{series_id}:{season}:{ep_num + 1}"
+                text=f"▶️ Наступна серія {next_num}",
+                callback_data=f"{ep_cb}:{series_id}:{season}:{next_num}"
             )])
         else:
             all_seasons = await get_series_seasons(series_id)
             if season + 1 in all_seasons:
-                first_ep = await get_episode(series_id, season + 1, 1)
-                if first_ep:
+                first_result = await _first_ep_in_season(series_id, season + 1)
+                if first_result:
+                    first_num, _ = first_result
                     buttons.append([InlineKeyboardButton(
-                        text=f"▶️ Сезон {season + 1}, Серія 1",
-                        callback_data=f"{ep_cb}:{series_id}:{season + 1}:1"
+                        text=f"▶️ Сезон {season + 1}, Серія {first_num}",
+                        callback_data=f"{ep_cb}:{series_id}:{season + 1}:{first_num}"
                     )])
 
         if buttons:
