@@ -1015,3 +1015,42 @@ async def get_anime_movies_by_series_name(series_name: str, include_hidden: bool
 
     cursor = db.videos.find(query).sort("year", 1)
     return await cursor.to_list(length=None)
+
+
+async def set_series_ongoing(series_id: str, url: str, dubbing: str) -> bool:
+    """Set series as ongoing and store source URL and dubbing"""
+    from bson import ObjectId
+    result = await db.videos.update_one(
+        {"_id": ObjectId(series_id)},
+        {"$set": {"ongoing": True, "source_url": url, "source_dubbing": dubbing}}
+    )
+    return result.modified_count > 0
+
+
+async def set_series_completed(series_id: str) -> bool:
+    """Mark series as completed"""
+    from bson import ObjectId
+    result = await db.videos.update_one(
+        {"_id": ObjectId(series_id)},
+        {"$set": {"ongoing": False}}
+    )
+    return result.modified_count > 0
+
+
+async def set_series_url(series_id: str, url: str, dubbing: str) -> bool:
+    """Update series source URL and dubbing"""
+    from bson import ObjectId
+    result = await db.videos.update_one(
+        {"_id": ObjectId(series_id)},
+        {"$set": {"source_url": url, "source_dubbing": dubbing}}
+    )
+    return result.modified_count > 0
+
+
+async def get_ongoing_series() -> list:
+    """Get all ongoing series"""
+    cursor = db.videos.find({
+        "ongoing": True,
+        "content_type": {"$in": ["series", "anime_series"]}
+    })
+    return await cursor.to_list(length=None)
