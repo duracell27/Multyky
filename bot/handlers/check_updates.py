@@ -8,7 +8,7 @@ from bot.config import config
 from bot.database.movies import get_ongoing_series
 from bot.database.auto_download_jobs import create_job
 from bot.utils.download_loop import start_job
-from bot.utils.scraper import parse_season_page, get_dubbing_options
+from bot.utils.scraper import parse_season_page, get_dubbing_options, get_uakino_season_urls
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -65,23 +65,34 @@ async def cmd_check_updates(message: Message) -> None:
             site = "uafix" if "uafix.net" in source_url else "uakino"
 
             if site == "uafix":
+                check_url = source_url
                 url_season = max_season
                 season_param = max_season
             else:
-                # Визначаємо сезон з URL uakino (напр. "23-sezon" → 23)
-                m = re.search(r'(\d+)-sezon', source_url, re.I)
-                url_season = int(m.group(1)) if m else max_season
+                # Знаходимо URL для потрібного сезону автоматично
+                season_urls = await get_uakino_season_urls(source_url)
+                if max_season in season_urls:
+                    check_url = season_urls[max_season]
+                    url_season = max_season
+                elif season_urls:
+                    # Беремо найвищий доступний сезон
+                    url_season = max(season_urls)
+                    check_url = season_urls[url_season]
+                else:
+                    check_url = source_url
+                    m = re.search(r'(\d+)-sezon', source_url, re.I)
+                    url_season = int(m.group(1)) if m else max_season
                 season_param = None
 
-            dubbings = await get_dubbing_options(source_url, season=season_param)
+            dubbings = await get_dubbing_options(check_url, season=season_param)
             dubbing = dubbings[0] if dubbings else source_dubbing
-            parsed = await parse_season_page(source_url, dubbing, season=season_param)
+            parsed = await parse_season_page(check_url, dubbing, season=season_param)
 
             existing_eps = {int(k) for k in seasons.get(str(url_season), {}).keys()}
 
             new_pairs = [
-                (num, url)
-                for num, url in zip(parsed["episode_numbers"], parsed["episode_urls"])
+                (num, ep_url)
+                for num, ep_url in zip(parsed["episode_numbers"], parsed["episode_urls"])
                 if num not in existing_eps
             ]
 

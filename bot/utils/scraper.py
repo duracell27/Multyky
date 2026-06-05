@@ -690,6 +690,34 @@ def _sync_get_movie_m3u8(url: str, dubbing: str) -> str:
 # Public async API
 # ---------------------------------------------------------------------------
 
+def _sync_get_uakino_season_urls(base_url: str) -> dict[int, str]:
+    """Fetch a uakino.best series page and return {season_num: url} for all seasons."""
+    resp = _fetch(base_url)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    seasons_ul = soup.find("ul", class_="seasons")
+    result: dict[int, str] = {}
+    if seasons_ul:
+        for a in seasons_ul.find_all("a", href=True):
+            m = re.search(r"(\d+)-sezon", a["href"], re.I)
+            if m:
+                season_num = int(m.group(1))
+                href = a["href"]
+                if not href.startswith("http"):
+                    href = "https://uakino.best" + href
+                result[season_num] = href
+    # Also add the base URL's own season if not already present
+    m = re.search(r"(\d+)-sezon", base_url, re.I)
+    if m:
+        result.setdefault(int(m.group(1)), base_url)
+    return result
+
+
+async def get_uakino_season_urls(base_url: str) -> dict[int, str]:
+    """Return {season_num: url} for all seasons of a uakino.best series."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _sync_get_uakino_season_urls, base_url)
+
+
 async def get_dubbing_options(url: str, season: int = None) -> list[str]:
     """Return dubbing names for the given URL.
     For uafix.net series, `season` is required to fetch the first episode."""
