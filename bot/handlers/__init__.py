@@ -6,9 +6,11 @@ from bot.handlers.auto_download import router as auto_download_router
 from bot.handlers.auto_movie import router as auto_movie_router
 from bot.handlers.auto_anime_movie import router as auto_anime_movie_router
 from bot.handlers.auto_anime_download import router as auto_anime_download_router
+from bot.handlers.check_updates import router as check_updates_router
 
 __all__ = [
     "common_router", "admin_router", "catalog_router",
     "broadcast_router", "auto_download_router", "auto_movie_router",
     "auto_anime_movie_router", "auto_anime_download_router",
+    "check_updates_router",
 ]

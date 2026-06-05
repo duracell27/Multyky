@@ -1680,6 +1680,8 @@ async def btn_admin(message: Message):
         "/autoAnimeMovie — Аніме-фільм\n"
         "/autoAnimeDownload — Аніме-серіал\n"
         "/cancelAnimeDownload — Зупинити\n\n"
+        "🔄 <b>Оновлення:</b>\n"
+        "/checkUpdates — Перевірити нові серії\n\n"
         "<b>Мультфільми:</b>\n"
         "/addMovie - Додати мультфільм\n"
         "/addBatchMovie - Додати серіал (базовий)\n"

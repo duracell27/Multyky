@@ -17,6 +17,7 @@ from bot.handlers import (
     common_router, admin_router, catalog_router,
     broadcast_router, auto_download_router, auto_movie_router,
     auto_anime_movie_router, auto_anime_download_router,
+    check_updates_router,
 )
 from bot.database.users import send_daily_registration_report
 from bot.database.broadcasts import get_scheduled_broadcasts
@@ -151,6 +152,7 @@ async def main():
     dp.include_router(auto_movie_router)
     dp.include_router(auto_anime_movie_router)
     dp.include_router(auto_anime_download_router)
+    dp.include_router(check_updates_router)
 
     # Підключення до бази даних
     await db.connect()
