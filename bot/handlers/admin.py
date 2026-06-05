@@ -4414,36 +4414,15 @@ async def process_source_url(message: Message, state: FSMContext) -> None:
         await state.clear()
         await message.answer("❌ Сесія застаріла. Почни заново.")
         return
-    await state.update_data(source_url=url)
 
-    await message.answer("⏳ Отримую список озвучок...")
-    try:
-        from bot.utils.scraper import get_dubbing_options
-        if "uafix.net" in url:
-            content = await get_movie_by_id(series_id)
-            seasons = content.get("seasons", {}) if content else {}
-            max_season = max((int(s) for s in seasons.keys()), default=1)
-            dubbings = await get_dubbing_options(url, season=max_season)
-        else:
-            dubbings = await get_dubbing_options(url)
+    action = data.get("ongoing_action", "edit_url")
+    if action == "set_ongoing":
+        await set_series_ongoing(series_id, url, "")
+    else:
+        await set_series_url(series_id, url, "")
 
-        if not dubbings:
-            await message.answer("❌ Не вдалось отримати озвучки. Перевір URL і спробуй ще раз:")
-            return
-
-        await state.update_data(source_dubbings=dubbings)
-        buttons = [
-            [InlineKeyboardButton(text=d, callback_data=f"pick_src_dubbing:{i}")]
-            for i, d in enumerate(dubbings)
-        ]
-        await message.answer(
-            "🎙 Оберіть озвучку для відстеження оновлень:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
-        )
-        await state.set_state(SeriesOngoingStates.choosing_dubbing)
-    except Exception as e:
-        await message.answer(f"❌ Помилка при парсингу: {e}\nСпробуй інший URL:")
-        await state.set_state(SeriesOngoingStates.waiting_for_source_url)
+    await state.clear()
+    await message.answer(f"✅ Збережено!\n\nURL: <code>{url}</code>")
 
 
 @router.callback_query(SeriesOngoingStates.choosing_dubbing, F.data.startswith("pick_src_dubbing:"))
