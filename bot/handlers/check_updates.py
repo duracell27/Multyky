@@ -7,7 +7,7 @@ from bot.config import config
 from bot.database.movies import get_ongoing_series
 from bot.database.auto_download_jobs import create_job
 from bot.utils.download_loop import start_job
-from bot.utils.scraper import parse_season_page
+from bot.utils.scraper import parse_season_page, get_dubbing_options
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -63,7 +63,9 @@ async def cmd_check_updates(message: Message) -> None:
         try:
             site = "uafix" if "uafix.net" in source_url else "uakino"
             season_param = max_season if site == "uafix" else None
-            parsed = await parse_season_page(source_url, source_dubbing, season=season_param)
+            dubbings = await get_dubbing_options(source_url, season=season_param)
+            dubbing = dubbings[0] if dubbings else source_dubbing
+            parsed = await parse_season_page(source_url, dubbing, season=season_param)
 
             existing_eps = {int(k) for k in seasons.get(str(max_season), {}).keys()}
 
