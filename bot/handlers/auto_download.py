@@ -710,6 +710,7 @@ async def process_confirm(callback: CallbackQuery, state: FSMContext, bot: Bot):
         episode_urls=data["episode_urls"],
         episode_numbers=data.get("episode_numbers"),
         admin_id=callback.from_user.id,
+        content_type=data.get("content_type", "series"),
     )
 
     await state.clear()
@@ -721,6 +722,59 @@ async def process_confirm(callback: CallbackQuery, state: FSMContext, bot: Bot):
     )
     await start_job(bot, job_id)
     await callback.answer()
+
+
+# ── Наступний сезон ──────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("next_season:"))
+async def start_next_season(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔️", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    series_id, next_season, content_type = parts[1], int(parts[2]), parts[3]
+
+    series = await get_movie_by_id(series_id)
+    series_title = series.get("title", "?") if series else "?"
+
+    await state.set_data({
+        "series_id": series_id,
+        "series_title": series_title,
+        "season": next_season,
+        "content_type": content_type,
+    })
+    await callback.message.answer(
+        f"▶️ <b>Наступний сезон</b>\n\n"
+        f"📺 {series_title}\n"
+        f"📅 Сезон: {next_season}\n\n"
+        f"Надішліть URL сезону {next_season} з uakino.best або uafix.net:"
+    )
+    await state.set_state(AutoDownloadStates.waiting_for_next_season_url)
+    await callback.answer()
+
+
+@router.message(AutoDownloadStates.waiting_for_next_season_url, ~F.text.startswith("/"))
+async def process_next_season_url(message: Message, state: FSMContext):
+    url = message.text.strip()
+    if "uakino.best" not in url and "uafix.net" not in url:
+        await message.answer("❌ URL має містити uakino.best або uafix.net. Спробуйте ще раз:")
+        return
+
+    site = "uafix" if "uafix.net" in url else "uakino"
+    data = await state.get_data()
+    season = data["season"]
+    season_param = season if site == "uafix" else None
+
+    await state.update_data(season_url=url, site=site)
+    wait_msg = await message.answer("⏳ Парсю сторінку...")
+    try:
+        dubbings = await get_dubbing_options(url, season=season_param)
+    except Exception as e:
+        await wait_msg.edit_text(f"❌ Не вдалося завантажити сторінку: {e}")
+        return
+
+    await _show_dubbing_picker(wait_msg, state, dubbings, edit=True)
 
 
 # ── /cancelDownload ──────────────────────────────────────────────────────────

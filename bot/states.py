@@ -151,6 +151,8 @@ class AutoDownloadStates(StatesGroup):
     waiting_for_url = State()
     choosing_dubbing = State()
     confirming = State()
+    # наступний сезон після завершення завантаження
+    waiting_for_next_season_url = State()
 
 
 class AutoMovieStates(StatesGroup):

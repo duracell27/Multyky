@@ -227,6 +227,10 @@ async def _run_loop(bot: Bot, job_id: str) -> None:
     done_markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Зробити розсилку", callback_data=f"post_quick:{post_type}:{series_id}")],
         [InlineKeyboardButton(text="📺 Переглянути серіал", url=view_url)],
+        [InlineKeyboardButton(
+            text=f"▶️ Завантажити сезон {season + 1}",
+            callback_data=f"next_season:{series_id}:{season + 1}:{job['content_type']}"
+        )],
         [InlineKeyboardButton(text=add_series_label, callback_data=add_series_cb),
          InlineKeyboardButton(text=add_movie_label, callback_data=add_movie_cb)],
     ])
