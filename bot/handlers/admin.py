@@ -2379,6 +2379,14 @@ async def process_edit_content_selection(callback: CallbackQuery, state: FSMCont
     visibility_text = "👁 Показати" if is_hidden else "🔒 Приховати"
     buttons.append([InlineKeyboardButton(text=visibility_text, callback_data=f"toggle_visibility:{content_id}")])
 
+    if content['content_type'] in ('series', 'anime_series'):
+        is_ongoing = content.get("ongoing", False)
+        ongoing_label = "🔄 Незавершений ✓" if is_ongoing else "✅ Завершений"
+        buttons.append([InlineKeyboardButton(
+            text=f"📡 Статус: {ongoing_label}",
+            callback_data=f"series_status:{content_id}"
+        )])
+
     buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="editfield:cancel")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -3009,6 +3017,14 @@ async def toggle_visibility_handler(callback: CallbackQuery, state: FSMContext):
     # Оновлюємо кнопку видимості
     visibility_text = "👁 Показати" if is_hidden else "🔒 Приховати"
     buttons.append([InlineKeyboardButton(text=visibility_text, callback_data=f"toggle_visibility:{content_id}")])
+
+    if content['content_type'] in ('series', 'anime_series'):
+        is_ongoing = content.get("ongoing", False)
+        ongoing_label = "🔄 Незавершений ✓" if is_ongoing else "✅ Завершений"
+        buttons.append([InlineKeyboardButton(
+            text=f"📡 Статус: {ongoing_label}",
+            callback_data=f"series_status:{content_id}"
+        )])
 
     buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="editfield:cancel")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
