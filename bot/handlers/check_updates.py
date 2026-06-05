@@ -1,4 +1,5 @@
 import logging
+import re
 from aiogram import Router, Bot, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
@@ -62,12 +63,21 @@ async def cmd_check_updates(message: Message) -> None:
 
         try:
             site = "uafix" if "uafix.net" in source_url else "uakino"
-            season_param = max_season if site == "uafix" else None
+
+            if site == "uafix":
+                url_season = max_season
+                season_param = max_season
+            else:
+                # Визначаємо сезон з URL uakino (напр. "23-sezon" → 23)
+                m = re.search(r'(\d+)-sezon', source_url, re.I)
+                url_season = int(m.group(1)) if m else max_season
+                season_param = None
+
             dubbings = await get_dubbing_options(source_url, season=season_param)
             dubbing = dubbings[0] if dubbings else source_dubbing
             parsed = await parse_season_page(source_url, dubbing, season=season_param)
 
-            existing_eps = {int(k) for k in seasons.get(str(max_season), {}).keys()}
+            existing_eps = {int(k) for k in seasons.get(str(url_season), {}).keys()}
 
             new_pairs = [
                 (num, url)
@@ -77,7 +87,7 @@ async def cmd_check_updates(message: Message) -> None:
 
             results.append({
                 "series": series,
-                "season": max_season,
+                "season": url_season,
                 "new_ep_nums": [p[0] for p in new_pairs],
                 "new_ep_urls": [p[1] for p in new_pairs],
                 "error": None,
