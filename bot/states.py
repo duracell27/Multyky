@@ -210,3 +210,9 @@ class AutoAnimeDownloadStates(StatesGroup):
     waiting_for_url = State()
     choosing_dubbing = State()
     confirming = State()
+
+
+class SeriesOngoingStates(StatesGroup):
+    """Стани для налаштування джерела оновлень серіалу"""
+    waiting_for_source_url = State()
+    choosing_dubbing = State()
