@@ -54,6 +54,11 @@ class SearchStates(StatesGroup):
     waiting_for_query = State()  # Чекаємо пошуковий запит від користувача
 
 
+class EpisodeJumpStates(StatesGroup):
+    """Стан для введення номера серії вручну"""
+    waiting_for_episode_number = State()
+
+
 class AddSuperBatchMovieStates(StatesGroup):
     """Стани для супер пакетного додавання серій (автоматичне визначення сезону/епізоду)"""
     choosing_existing_series = State()  # Вибір існуючого серіалу

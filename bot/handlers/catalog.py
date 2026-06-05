@@ -40,6 +40,7 @@ from bot.database.users import (
 )
 from bot.utils import send_movie_video
 from bot.config import config
+from bot.states import EpisodeJumpStates
 
 router = Router()
 
@@ -900,6 +901,14 @@ async def show_episodes(callback: CallbackQuery):
     if nav_buttons:
         buttons.append(nav_buttons)
 
+    if len(episodes) > 50:
+        buttons.append([
+            InlineKeyboardButton(
+                text="🔢 Ввести номер серії",
+                callback_data=f"ep_jump:{series_id}:{season}:series"
+            )
+        ])
+
     # Кнопка повернення до списку сезонів
     buttons.append([
         InlineKeyboardButton(
@@ -912,7 +921,6 @@ async def show_episodes(callback: CallbackQuery):
 
     page_info = f"Сторінка {page + 1}/{total_pages}" if total_pages > 1 else ""
 
-    # Редагуємо текстове повідомлення
     text = f"Сезон {season}\n\nВиберіть серію:"
     if page_info:
         text += f"\n{page_info}"
@@ -2115,6 +2123,14 @@ async def show_anime_episodes(callback: CallbackQuery):
     if nav_buttons:
         buttons.append(nav_buttons)
 
+    if len(episode_numbers) > 50:
+        buttons.append([
+            InlineKeyboardButton(
+                text="🔢 Ввести номер серії",
+                callback_data=f"ep_jump:{series_id}:{season}:anime"
+            )
+        ])
+
     buttons.append([InlineKeyboardButton(text="◀️ Назад до сезонів", callback_data=f"as:{series_id}")])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -2238,3 +2254,150 @@ async def send_anime_episode(callback: CallbackQuery, bot: Bot):
             chat_id=callback.from_user.id,
             text=f"❌ На жаль, не вдалося відправити серію.\nСпробуй пізніше."
         )
+
+
+# ── Швидкий перехід до серії за номером ──────────────────────────────────────
+
+@router.callback_query(F.data.startswith("ep_jump:"))
+async def ask_episode_number(callback: CallbackQuery, state: FSMContext):
+    """Показати запит на введення номера серії."""
+    parts = callback.data.split(":")
+    series_id = parts[1]
+    season = int(parts[2])
+    kind = parts[3]  # "series" or "anime"
+
+    if kind == "anime":
+        series_info = await get_movie_by_id(series_id)
+        if not series_info or "seasons" not in series_info or str(season) not in series_info["seasons"]:
+            await callback.answer("❌ Не знайдено серій", show_alert=True)
+            return
+        ep_nums = sorted(int(k) for k in series_info["seasons"][str(season)].keys())
+    else:
+        series_info = await get_movie_by_id(series_id)
+        if not series_info:
+            await callback.answer("❌ Серіал не знайдено", show_alert=True)
+            return
+        episodes = await get_series_episodes(series_info["title"], season)
+        ep_nums = [ep["episode"] for ep in episodes]
+
+    if not ep_nums:
+        await callback.answer("❌ Серії не знайдено", show_alert=True)
+        return
+
+    await state.update_data(
+        ep_jump_series_id=series_id,
+        ep_jump_season=season,
+        ep_jump_kind=kind,
+        ep_jump_available=ep_nums,
+    )
+
+    min_ep, max_ep = min(ep_nums), max(ep_nums)
+    await callback.message.edit_text(
+        f"🔢 <b>Введи номер серії</b>\n\n"
+        f"Сезон {season} · доступні серії: {min_ep}–{max_ep}\n\n"
+        f"Просто надішли число:"
+    )
+    await state.set_state(EpisodeJumpStates.waiting_for_episode_number)
+    await callback.answer()
+
+
+@router.message(EpisodeJumpStates.waiting_for_episode_number)
+async def process_episode_jump(message: Message, state: FSMContext, bot: Bot):
+    """Обробити введений номер серії та відправити її."""
+    data = await state.get_data()
+    series_id = data["ep_jump_series_id"]
+    season = data["ep_jump_season"]
+    kind = data["ep_jump_kind"]
+    available = data["ep_jump_available"]
+
+    text = message.text.strip() if message.text else ""
+    if not text.isdigit():
+        await message.answer(f"❌ Введи ціле число. Доступні: {min(available)}–{max(available)}")
+        return
+
+    ep_num = int(text)
+    if ep_num not in available:
+        await message.answer(
+            f"❌ Серія {ep_num} не знайдена в сезоні {season}.\n"
+            f"Доступні: {min(available)}–{max(available)}"
+        )
+        return
+
+    await state.clear()
+
+    # Delegate to the existing episode sender via a fake callback_data
+    episode_data = await get_episode(series_id, season, ep_num)
+    if not episode_data:
+        await message.answer("❌ Серію не знайдено.")
+        return
+    await _send_episode_by_data(message, bot, series_id, season, ep_num, episode_data, kind=kind)
+
+
+async def _send_episode_by_data(message: Message, bot: Bot, series_id: str, season: int,
+                                 ep_num: int, episode_data: dict, kind: str):
+    """Відправити серію користувачу за даними епізоду (з кнопкою наступної серії)."""
+    import logging as _log
+    from bot.database.users import add_to_watch_history
+    from bot.database.movies import increment_views
+
+    await increment_views(series_id, message.from_user.id)
+    await add_to_watch_history(message.from_user.id, series_id, {
+        "series_id": series_id,
+        "series_title": episode_data.get("series_title", ""),
+        "season": season,
+        "episode": ep_num,
+    })
+
+    ep_cb = "ae" if kind == "anime" else "e"
+    emoji = "🎌" if kind == "anime" else "📺"
+    sep = " | " if kind == "anime" else ", "
+
+    caption = (
+        f"{emoji} <b>{episode_data.get('series_title', '')}</b>\n"
+        f"Сезон {season}{sep}Серія {ep_num}\n\n"
+        f"📺 <a href='https://t.me/multyky_ua_bot'>Мультики 🇺🇦 | Мультфільми Українською</a>\n"
+        f"📢 <a href='https://t.me/multyky_ua_channel'>Канал з оновленнями контенту</a>"
+    )
+
+    video_file_id = episode_data.get("video_file_id")
+    video_type = episode_data.get("video_type", "video")
+
+    try:
+        if video_type == "video":
+            sent = await bot.send_video(
+                chat_id=message.from_user.id, video=video_file_id, caption=caption
+            )
+        else:
+            sent = await bot.send_document(
+                chat_id=message.from_user.id, document=video_file_id, caption=caption
+            )
+
+        # Кнопка наступної серії — та сама логіка що в send_episode / send_anime_episode
+        buttons = []
+        next_ep = await get_episode(series_id, season, ep_num + 1)
+        if next_ep:
+            buttons.append([InlineKeyboardButton(
+                text=f"▶️ Наступна серія {ep_num + 1}",
+                callback_data=f"{ep_cb}:{series_id}:{season}:{ep_num + 1}"
+            )])
+        else:
+            all_seasons = await get_series_seasons(series_id)
+            if season + 1 in all_seasons:
+                first_ep = await get_episode(series_id, season + 1, 1)
+                if first_ep:
+                    buttons.append([InlineKeyboardButton(
+                        text=f"▶️ Сезон {season + 1}, Серія 1",
+                        callback_data=f"{ep_cb}:{series_id}:{season + 1}:1"
+                    )])
+
+        if buttons:
+            await bot.edit_message_caption(
+                chat_id=message.from_user.id,
+                message_id=sent.message_id,
+                caption=caption,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+            )
+
+    except Exception as e:
+        _log.error(f"episode_jump send failed: {e}")
+        await message.answer("❌ Не вдалося відправити серію. Спробуй пізніше.")
