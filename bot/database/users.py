@@ -191,6 +191,29 @@ async def get_recent_views_all_users(limit: int = 5) -> list:
     return await cursor.to_list(length=None)
 
 
+async def get_today_views(admin_ids: list) -> list:
+    """Отримати всі перегляди за сьогодні (Київ), виключаючи адмінів"""
+    from bot.utils.timezone import kyiv_start_of_today_utc
+    start_of_day = kyiv_start_of_today_utc()
+
+    pipeline = [
+        {"$unwind": "$watch_history"},
+        {"$match": {
+            "watch_history.watched_at": {"$gte": start_of_day},
+            "user_id": {"$nin": admin_ids}
+        }},
+        {"$sort": {"watch_history.watched_at": -1}},
+        {"$project": {
+            "user_id": 1,
+            "first_name": 1,
+            "username": 1,
+            "entry": "$watch_history"
+        }}
+    ]
+    cursor = db.users.aggregate(pipeline)
+    return await cursor.to_list(length=None)
+
+
 async def add_to_watch_later(user_id: int, series_id: str) -> bool:
     """Додати серіал в чергу перегляду"""
     result = await db.users.update_one(
@@ -262,34 +285,30 @@ async def get_watched_movies(user_id: int) -> list:
     return []
 
 
-async def get_new_users_count_for_date(date: datetime) -> int:
-    """Отримати кількість нових користувачів за конкретну дату"""
+async def get_new_users_count_for_date(kyiv_date: datetime) -> int:
+    """Отримати кількість нових користувачів за конкретну дату (за київським часом)"""
+    from bot.utils.timezone import kyiv_start_of_day_utc
     from datetime import timedelta
 
-    # Визначаємо початок та кінець дня
-    start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_of_day = kyiv_start_of_day_utc(kyiv_date)
     end_of_day = start_of_day + timedelta(days=1)
 
-    # Підраховуємо користувачів, зареєстрованих в цей день
-    count = await db.users.count_documents({
+    return await db.users.count_documents({
         "registered_at": {
             "$gte": start_of_day,
             "$lt": end_of_day
         }
     })
 
-    return count
 
-
-async def get_new_users_for_date(date: datetime) -> list:
-    """Отримати список нових користувачів за конкретну дату"""
+async def get_new_users_for_date(kyiv_date: datetime) -> list:
+    """Отримати список нових користувачів за конкретну дату (за київським часом)"""
+    from bot.utils.timezone import kyiv_start_of_day_utc
     from datetime import timedelta
 
-    # Визначаємо початок та кінець дня
-    start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_of_day = kyiv_start_of_day_utc(kyiv_date)
     end_of_day = start_of_day + timedelta(days=1)
 
-    # Отримуємо користувачів, зареєстрованих в цей день
     cursor = db.users.find({
         "registered_at": {
             "$gte": start_of_day,
@@ -302,17 +321,18 @@ async def get_new_users_for_date(date: datetime) -> list:
 
 async def send_daily_registration_report(bot: Bot):
     """Відправити щоденний звіт про реєстрації адміністраторам"""
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     from bot.database.movies import get_total_views_count
+    from bot.utils.timezone import now_kyiv
 
     # Зберігаємо щоденну статистику
     await save_daily_stats()
 
-    # Отримуємо вчорашню дату (звіт за попередній день)
-    yesterday = datetime.utcnow() - timedelta(days=1)
+    # Вчорашній день за київським часом
+    yesterday_kyiv = now_kyiv() - timedelta(days=1)
 
     # Отримуємо кількість та список нових користувачів за вчора
-    new_users_count = await get_new_users_count_for_date(yesterday)
+    new_users_count = await get_new_users_count_for_date(yesterday_kyiv)
 
     # Отримуємо статистику переглядів
     total_views = await get_total_views_count()
@@ -323,7 +343,7 @@ async def send_daily_registration_report(bot: Bot):
         # (або можна відправити повідомлення про те, що нових немає)
         message = (
             f"📊 <b>Щоденний звіт</b>\n\n"
-            f"📅 Дата: {yesterday.strftime('%d.%m.%Y')}\n\n"
+            f"📅 Дата: {yesterday_kyiv.strftime('%d.%m.%Y')}\n\n"
             f"👥 Нових користувачів: <b>0</b>\n"
             f"<i>Вчора не було нових реєстрацій</i>\n\n"
             f"👁 <b>Перегляди:</b>\n"
@@ -332,11 +352,11 @@ async def send_daily_registration_report(bot: Bot):
         )
     else:
         # Отримуємо детальний список нових користувачів
-        new_users = await get_new_users_for_date(yesterday)
+        new_users = await get_new_users_for_date(yesterday_kyiv)
 
         message = (
             f"📊 <b>Щоденний звіт</b>\n\n"
-            f"📅 Дата: {yesterday.strftime('%d.%m.%Y')}\n\n"
+            f"📅 Дата: {yesterday_kyiv.strftime('%d.%m.%Y')}\n\n"
             f"👥 Нових користувачів: <b>{new_users_count}</b>\n\n"
             f"👁 <b>Перегляди:</b>\n"
             f"   • За останній день: <b>{views_today}</b>\n"
@@ -382,22 +402,23 @@ async def send_daily_registration_report(bot: Bot):
 async def save_daily_stats():
     """Зберегти щоденну статистику"""
     from bot.database.movies import get_total_views_count
+    from bot.utils.timezone import kyiv_start_of_today_utc
 
-    # Отримуємо поточну статистику
     total_users = await get_users_count()
     total_views = await get_total_views_count()
 
-    # Зберігаємо в базу
+    # Ключ дня — UTC-початок поточного київського дня
+    day_key = kyiv_start_of_today_utc()
+
     stats_data = {
-        "date": datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0),
+        "date": day_key,
         "users_count": total_users,
         "views_count": total_views,
         "created_at": datetime.utcnow()
     }
 
-    # Використовуємо upsert щоб не дублювати записи за один день
     await db.daily_stats.update_one(
-        {"date": stats_data["date"]},
+        {"date": day_key},
         {"$set": stats_data},
         upsert=True
     )
@@ -406,9 +427,12 @@ async def save_daily_stats():
 
 
 async def get_yesterday_stats() -> Optional[dict]:
-    """Отримати статистику за вчора"""
-    yesterday = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
-    return await db.daily_stats.find_one({"date": yesterday})
+    """Отримати статистику за вчора (за київським часом)"""
+    from bot.utils.timezone import now_kyiv, kyiv_start_of_day_utc
+
+    yesterday_kyiv = now_kyiv() - timedelta(days=1)
+    yesterday_key = kyiv_start_of_day_utc(yesterday_kyiv)
+    return await db.daily_stats.find_one({"date": yesterday_key})
 
 
 async def get_views_for_last_day() -> int:

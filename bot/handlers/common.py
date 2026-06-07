@@ -12,7 +12,8 @@ from bot.database.users import (
     get_watch_later,
     add_to_watch_history,
     is_movie_watched,
-    get_recent_views_all_users
+    get_recent_views_all_users,
+    get_today_views,
 )
 from bot.database.movies import (
     get_movies_count,
@@ -723,7 +724,8 @@ async def cmd_stats(message: Message):
             else:
                 emoji = "🎬"
 
-            time_str = watched_at.strftime("%d.%m %H:%M") if watched_at else ""
+            from bot.utils.timezone import utc_to_kyiv
+            time_str = utc_to_kyiv(watched_at).strftime("%d.%m %H:%M") if watched_at else ""
             recent_text += f"   {emoji} {title} — {user_label} [{time_str}]\n"
     else:
         recent_text = "   Немає даних\n"
@@ -753,6 +755,132 @@ async def cmd_stats(message: Message):
     )
 
     await message.answer(stats_text)
+
+
+# ===============================================
+# /views — всі перегляди за сьогодні
+# ===============================================
+
+def _build_hourly_chart(views: list) -> str:
+    """Побудувати ASCII-графік переглядів по годинах (київський час)"""
+    from bot.utils.timezone import utc_to_kyiv, now_kyiv
+
+    hours = [0] * 24
+    for item in views:
+        watched_at = item.get("entry", {}).get("watched_at")
+        if watched_at:
+            kyiv_hour = utc_to_kyiv(watched_at).hour
+            hours[kyiv_hour] += 1
+
+    max_count = max(hours) if any(h > 0 for h in hours) else 1
+    max_bar = 12
+    current_hour = now_kyiv().hour
+
+    lines = []
+    for h, count in enumerate(hours):
+        bar_len = round(count / max_count * max_bar) if max_count > 0 else 0
+        bar = "█" * bar_len
+        marker = " ◄" if h == current_hour else ""
+        count_str = f" {count}" if count > 0 else ""
+        lines.append(f"{h:02d}│{bar}{count_str}{marker}")
+
+    return "\n".join(lines)
+
+
+async def _show_views_page(message: Message, page: int, edit: bool = False):
+    """Показати сторінку всіх переглядів за сьогодні"""
+    from bot.utils.timezone import now_kyiv, utc_to_kyiv
+
+    views = await get_today_views(list(config.ADMIN_IDS))
+
+    ITEMS_PER_PAGE = 20
+    total = len(views)
+    total_pages = max(1, (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+
+    today_str = now_kyiv().strftime("%d.%m.%Y")
+
+    # Графік тільки на першій сторінці
+    chart_block = ""
+    if page == 0:
+        chart = _build_hourly_chart(views)
+        chart_block = f"\n<b>По годинах (Київ):</b>\n<code>{chart}</code>\n"
+
+    # Список переглядів поточної сторінки
+    start = page * ITEMS_PER_PAGE
+    page_views = views[start:start + ITEMS_PER_PAGE]
+
+    lines = []
+    for idx, item in enumerate(page_views, start=start + 1):
+        entry = item.get("entry", {})
+        title = entry.get("title", "Без назви")
+        ct = entry.get("content_type", "movie")
+        watched_at = entry.get("watched_at")
+        first_name = item.get("first_name", "")
+        username = item.get("username")
+        user_label = f"@{username}" if username else first_name
+
+        if ct == "movie":
+            emoji = "🎬"
+        elif ct == "series":
+            emoji = "📺"
+        elif ct in ("anime_movie", "anime_series"):
+            emoji = "🎌"
+        else:
+            emoji = "🎬"
+
+        season = entry.get("season")
+        episode = entry.get("episode")
+        ep_info = f" S{season}E{episode}" if season and episode else ""
+
+        time_str = utc_to_kyiv(watched_at).strftime("%H:%M") if watched_at else "?"
+        lines.append(f"{idx}. {emoji} {title}{ep_info} — {user_label} [{time_str}]")
+
+    list_text = "\n".join(lines) if lines else "<i>Немає переглядів</i>"
+
+    text = (
+        f"👁 <b>Перегляди за {today_str}</b>\n"
+        f"📊 Всього: <b>{total}</b>{chart_block}\n"
+        f"<b>Список (стор. {page + 1}/{total_pages}):</b>\n"
+        f"{list_text}"
+    )
+
+    buttons = []
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"views_page:{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"views_page:{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+
+    if edit:
+        await message.edit_text(text, reply_markup=keyboard)
+    else:
+        await message.answer(text, reply_markup=keyboard)
+
+
+@router.message(Command("views"))
+async def cmd_views(message: Message):
+    """Всі перегляди за сьогодні (тільки адміни)"""
+    if message.from_user.id not in config.ADMIN_IDS:
+        await message.answer("⛔️ Ця команда доступна тільки для адміністраторів.")
+        return
+
+    await _show_views_page(message, page=0)
+
+
+@router.callback_query(F.data.startswith("views_page:"))
+async def handle_views_page(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔️")
+        return
+
+    page = int(callback.data.split(":", 1)[1])
+    await _show_views_page(callback.message, page=page, edit=True)
+    await callback.answer()
 
 
 @router.message(Command("history"))

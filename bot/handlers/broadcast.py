@@ -6,6 +6,8 @@ from datetime import datetime
 import asyncio
 import logging
 
+from bot.utils.timezone import now_kyiv, utc_to_kyiv, kyiv_to_utc_naive
+
 from bot.config import config
 from bot.states import BroadcastStates
 from bot.database.broadcasts import (
@@ -542,23 +544,26 @@ async def schedule_broadcast(callback: CallbackQuery, state: FSMContext):
 async def process_schedule_time(message: Message, state: FSMContext):
     """Обробка часу для планування"""
     try:
-        # Парсимо дату і час
-        scheduled_time = datetime.strptime(message.text, "%d.%m.%Y %H:%M")
+        # Парсимо дату і час як київський час
+        scheduled_time_kyiv = datetime.strptime(message.text, "%d.%m.%Y %H:%M")
 
-        # Перевіряємо що час в майбутньому
-        if scheduled_time <= datetime.now():
+        # Перевіряємо що час в майбутньому (за Києвом)
+        if scheduled_time_kyiv <= now_kyiv().replace(tzinfo=None):
             await message.answer("❌ Час повинен бути в майбутньому. Спробуйте ще раз.")
             return
 
+        # Конвертуємо київський час в UTC для зберігання
+        scheduled_time_utc = kyiv_to_utc_naive(scheduled_time_kyiv)
+
         data = await state.get_data()
 
-        # Створюємо розсилку в базі
+        # Створюємо розсилку в базі (зберігаємо UTC)
         broadcast_id = await create_broadcast(
             title=data['title'],
             description=data['description'],
             photo_file_id=data.get('photo_file_id'),
             content_ids=data.get('content_ids', []),
-            scheduled_time=scheduled_time
+            scheduled_time=scheduled_time_utc
         )
 
         # Оновлюємо статус на "scheduled"
@@ -568,7 +573,7 @@ async def process_schedule_time(message: Message, state: FSMContext):
 
         await message.answer(
             f"✅ <b>Розсилку заплановано!</b>\n\n"
-            f"📅 Дата відправки: {scheduled_time.strftime('%d.%m.%Y о %H:%M')}\n\n"
+            f"📅 Дата відправки: {scheduled_time_kyiv.strftime('%d.%m.%Y о %H:%M')} (Київ)\n\n"
             f"Розсилка буде автоматично відправлена у вказаний час."
         )
 
@@ -617,14 +622,14 @@ async def show_broadcasts_list(callback: CallbackQuery):
 
         title = broadcast['title'][:25] + '...' if len(broadcast['title']) > 25 else broadcast['title']
 
-        # Додаємо дату
+        # Додаємо дату (конвертуємо UTC → Київ)
         date_str = ""
         if broadcast.get('sent_at'):
-            date_str = broadcast['sent_at'].strftime(' %d.%m.%y')
+            date_str = utc_to_kyiv(broadcast['sent_at']).strftime(' %d.%m.%y')
         elif broadcast.get('scheduled_time'):
-            date_str = broadcast['scheduled_time'].strftime(' %d.%m.%y')
+            date_str = utc_to_kyiv(broadcast['scheduled_time']).strftime(' %d.%m.%y')
         elif broadcast.get('created_at'):
-            date_str = broadcast['created_at'].strftime(' %d.%m.%y')
+            date_str = utc_to_kyiv(broadcast['created_at']).strftime(' %d.%m.%y')
 
         buttons.append([
             InlineKeyboardButton(
@@ -684,17 +689,17 @@ async def view_broadcast_details(callback: CallbackQuery):
 
     # Додаємо дату створення
     if broadcast.get('created_at'):
-        created_str = broadcast['created_at'].strftime('%d.%m.%Y о %H:%M')
+        created_str = utc_to_kyiv(broadcast['created_at']).strftime('%d.%m.%Y о %H:%M')
         details_text += f"<b>Створено:</b> {created_str}\n"
 
     # Додаємо дату планування
     if broadcast.get('scheduled_time'):
-        scheduled_str = broadcast['scheduled_time'].strftime('%d.%m.%Y о %H:%M')
-        details_text += f"<b>Заплановано на:</b> {scheduled_str}\n"
+        scheduled_str = utc_to_kyiv(broadcast['scheduled_time']).strftime('%d.%m.%Y о %H:%M')
+        details_text += f"<b>Заплановано на:</b> {scheduled_str} (Київ)\n"
 
     # Додаємо дату відправки
     if broadcast.get('sent_at'):
-        sent_str = broadcast['sent_at'].strftime('%d.%m.%Y о %H:%M')
+        sent_str = utc_to_kyiv(broadcast['sent_at']).strftime('%d.%m.%Y о %H:%M')
         details_text += f"<b>Відправлено:</b> {sent_str}\n"
 
     # Додаємо статистику якщо є

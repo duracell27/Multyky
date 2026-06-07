@@ -10,6 +10,7 @@ from aiogram.types import MessageOriginChannel, MessageOriginChat
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
+from bot.utils.timezone import now_kyiv, utc_to_kyiv, kyiv_to_utc_naive
 from bot.states import (
     AddMovieStates, AddBatchMovieStates, DeleteContentStates,
     EditContentStates, AddSuperBatchMovieStates,
@@ -4176,7 +4177,7 @@ async def process_post_schedule_time(message: Message, state: FSMContext):
         return
 
     try:
-        scheduled_time = datetime.strptime(message.text.strip(), "%d.%m.%Y %H:%M")
+        scheduled_time_kyiv = datetime.strptime(message.text.strip(), "%d.%m.%Y %H:%M")
     except ValueError:
         await message.answer(
             "❌ Невірний формат.\n\n"
@@ -4185,15 +4186,18 @@ async def process_post_schedule_time(message: Message, state: FSMContext):
         )
         return
 
-    if scheduled_time <= datetime.now():
+    if scheduled_time_kyiv <= now_kyiv().replace(tzinfo=None):
         await message.answer("❌ Час має бути в майбутньому. Спробуйте ще раз:")
         return
+
+    # Конвертуємо київський час в UTC для зберігання
+    scheduled_time_utc = kyiv_to_utc_naive(scheduled_time_kyiv)
 
     data = await state.get_data()
     await create_scheduled_post(
         caption=data.get("caption"),
         deep_link_url=data.get("deep_link_url"),
-        scheduled_time=scheduled_time,
+        scheduled_time=scheduled_time_utc,
         content_title=data.get("content_title", ""),
         poster_file_id=data.get("poster_file_id"),
     )
@@ -4202,7 +4206,7 @@ async def process_post_schedule_time(message: Message, state: FSMContext):
     await message.answer(
         f"✅ <b>Пост заплановано!</b>\n\n"
         f"📺 {data.get('content_title')}\n"
-        f"📅 Буде опубліковано: {scheduled_time.strftime('%d.%m.%Y о %H:%M')}\n\n"
+        f"📅 Буде опубліковано: {scheduled_time_kyiv.strftime('%d.%m.%Y о %H:%M')} (Київ)\n\n"
         f"Переглянути заплановані: /scheduled_posts"
     )
 
@@ -4223,7 +4227,7 @@ async def cmd_scheduled_posts(message: Message):
     for post in posts:
         post_id = str(post["_id"])
         title = post.get("content_title", "Без назви")
-        scheduled = post["scheduled_time"].strftime("%d.%m %H:%M")
+        scheduled = utc_to_kyiv(post["scheduled_time"]).strftime("%d.%m %H:%M")
         buttons.append([InlineKeyboardButton(
             text=f"🗑 {title} — {scheduled}",
             callback_data=f"delete_spost:{post_id}"

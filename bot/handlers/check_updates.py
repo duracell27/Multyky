@@ -1,5 +1,6 @@
 import logging
 import re
+from collections import defaultdict
 from aiogram import Router, Bot, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
@@ -21,6 +22,101 @@ def is_admin(user_id: int) -> bool:
     return user_id in config.ADMIN_IDS
 
 
+async def _collect_missing_episodes(series: dict) -> list[dict]:
+    """
+    Returns a list of result dicts (one per season that has missing episodes or errors).
+    Each dict: {series, season, new_ep_nums, new_ep_urls, error}.
+    """
+    source_url = series.get("source_url", "")
+    source_dubbing = series.get("source_dubbing", "")
+    seasons = series.get("seasons", {})
+
+    if not source_url:
+        return [{"series": series, "season": 0, "new_ep_nums": [], "new_ep_urls": [], "error": "URL не вказано"}]
+
+    site = "uafix" if "uafix.net" in source_url else "uakino"
+    results = []
+
+    try:
+        if site == "uakino":
+            season_urls = await get_uakino_season_urls(source_url)
+            if not season_urls:
+                return [{"series": series, "season": 0, "new_ep_nums": [], "new_ep_urls": [], "error": "Не знайдено сезонів на сайті"}]
+
+            for site_season, check_url in sorted(season_urls.items()):
+                try:
+                    dubbings = await get_dubbing_options(check_url)
+                    dubbing = dubbings[0] if dubbings else source_dubbing
+                    parsed = await parse_season_page(check_url, dubbing)
+
+                    existing_eps = {int(k) for k in seasons.get(str(site_season), {}).keys()}
+                    new_pairs = [
+                        (num, ep_url)
+                        for num, ep_url in zip(parsed["episode_numbers"], parsed["episode_urls"])
+                        if num not in existing_eps
+                    ]
+
+                    if new_pairs:
+                        results.append({
+                            "series": series,
+                            "season": site_season,
+                            "new_ep_nums": [p[0] for p in new_pairs],
+                            "new_ep_urls": [p[1] for p in new_pairs],
+                            "error": None,
+                        })
+                except Exception as e:
+                    logger.error(f"checkUpdates uakino season {site_season}: {e}")
+                    results.append({
+                        "series": series,
+                        "season": site_season,
+                        "new_ep_nums": [], "new_ep_urls": [],
+                        "error": str(e)[:120],
+                    })
+
+        else:  # uafix
+            max_db_season = max((int(s) for s in seasons.keys()), default=0)
+            # Check from season 1 up to max_db_season+1 to catch both gaps and new seasons
+            for season_num in range(1, max_db_season + 2):
+                try:
+                    dubbings = await get_dubbing_options(source_url, season=season_num)
+                    dubbing = dubbings[0] if dubbings else source_dubbing
+                    parsed = await parse_season_page(source_url, dubbing, season=season_num)
+                except ValueError:
+                    # Season doesn't exist on site — stop scanning
+                    break
+                except Exception as e:
+                    logger.error(f"checkUpdates uafix season {season_num}: {e}")
+                    results.append({
+                        "series": series,
+                        "season": season_num,
+                        "new_ep_nums": [], "new_ep_urls": [],
+                        "error": str(e)[:120],
+                    })
+                    break
+
+                existing_eps = {int(k) for k in seasons.get(str(season_num), {}).keys()}
+                new_pairs = [
+                    (num, ep_url)
+                    for num, ep_url in zip(parsed["episode_numbers"], parsed["episode_urls"])
+                    if num not in existing_eps
+                ]
+
+                if new_pairs:
+                    results.append({
+                        "series": series,
+                        "season": season_num,
+                        "new_ep_nums": [p[0] for p in new_pairs],
+                        "new_ep_urls": [p[1] for p in new_pairs],
+                        "error": None,
+                    })
+
+    except Exception as e:
+        logger.error(f"checkUpdates error for {series.get('title', '?')}: {e}")
+        return [{"series": series, "season": 0, "new_ep_nums": [], "new_ep_urls": [], "error": str(e)[:120]}]
+
+    return results
+
+
 @router.message(Command("checkUpdates"))
 async def cmd_check_updates(message: Message) -> None:
     if not is_admin(message.from_user.id):
@@ -34,105 +130,43 @@ async def cmd_check_updates(message: Message) -> None:
         await message.answer("ℹ️ Немає серіалів з позначкою 'незавершений'.")
         return
 
-    results = []
-
+    all_results = []
     for series in ongoing:
-        series_id = str(series["_id"])
-        title = series.get("title", "?")
-        source_url = series.get("source_url", "")
-        source_dubbing = series.get("source_dubbing", "")
-        seasons = series.get("seasons", {})
+        season_results = await _collect_missing_episodes(series)
+        all_results.extend(season_results)
 
-        if not source_url:
-            results.append({
-                "series": series, "season": 0,
-                "new_ep_nums": [], "new_ep_urls": [],
-                "error": "URL не вказано"
-            })
-            continue
-
-        if not seasons:
-            results.append({
-                "series": series, "season": 0,
-                "new_ep_nums": [], "new_ep_urls": [],
-                "error": "Немає сезонів в базі"
-            })
-            continue
-
-        max_season = max(int(s) for s in seasons.keys())
-
-        try:
-            site = "uafix" if "uafix.net" in source_url else "uakino"
-
-            if site == "uafix":
-                check_url = source_url
-                url_season = max_season
-                season_param = max_season
-            else:
-                # Знаходимо URL для потрібного сезону автоматично
-                season_urls = await get_uakino_season_urls(source_url)
-                if max_season in season_urls:
-                    check_url = season_urls[max_season]
-                    url_season = max_season
-                elif season_urls:
-                    # Беремо найвищий доступний сезон
-                    url_season = max(season_urls)
-                    check_url = season_urls[url_season]
-                else:
-                    check_url = source_url
-                    m = re.search(r'(\d+)-sezon', source_url, re.I)
-                    url_season = int(m.group(1)) if m else max_season
-                season_param = None
-
-            dubbings = await get_dubbing_options(check_url, season=season_param)
-            dubbing = dubbings[0] if dubbings else source_dubbing
-            parsed = await parse_season_page(check_url, dubbing, season=season_param)
-
-            existing_eps = {int(k) for k in seasons.get(str(url_season), {}).keys()}
-
-            new_pairs = [
-                (num, ep_url)
-                for num, ep_url in zip(parsed["episode_numbers"], parsed["episode_urls"])
-                if num not in existing_eps
-            ]
-
-            results.append({
-                "series": series,
-                "season": url_season,
-                "new_ep_nums": [p[0] for p in new_pairs],
-                "new_ep_urls": [p[1] for p in new_pairs],
-                "error": None,
-            })
-        except Exception as e:
-            logger.error(f"checkUpdates error for {title}: {e}")
-            results.append({
-                "series": series,
-                "season": max_season,
-                "new_ep_nums": [], "new_ep_urls": [],
-                "error": str(e)[:120],
-            })
+    # Group by series for the report
+    grouped: dict[str, list] = defaultdict(list)
+    for r in all_results:
+        grouped[str(r["series"]["_id"])].append(r)
 
     lines = ["📋 <b>Звіт оновлень:</b>\n"]
     has_new = False
 
-    for r in results:
-        title = r["series"].get("title", "?")
-        if r["error"]:
-            lines.append(f"❌ {title} — {r['error']}")
-        elif r["new_ep_nums"]:
+    for series_results in grouped.values():
+        title = series_results[0]["series"].get("title", "?")
+        errors = [r for r in series_results if r["error"]]
+        new_seasons = [r for r in series_results if r["new_ep_nums"] and not r["error"]]
+
+        if errors:
+            for r in errors:
+                lines.append(f"❌ {title} (с.{r['season']}) — {r['error']}")
+
+        if new_seasons:
             has_new = True
-            ep_list = ", ".join(str(n) for n in r["new_ep_nums"])
-            lines.append(
-                f"✅ {title} — знайдено {len(r['new_ep_nums'])} нових серій "
-                f"(с.{r['season']}: {ep_list})"
-            )
-        else:
+            parts = []
+            for r in new_seasons:
+                ep_list = ", ".join(str(n) for n in r["new_ep_nums"])
+                parts.append(f"с.{r['season']}: {ep_list}")
+            lines.append(f"✅ {title} — нові серії ({'; '.join(parts)})")
+
+        if not errors and not new_seasons:
             lines.append(f"⏸ {title} — актуальний")
 
     report_text = "\n".join(lines)
 
     if has_new:
-        _pending_updates[message.from_user.id] = results
+        _pending_updates[message.from_user.id] = all_results
         buttons = [
             [InlineKeyboardButton(text="✅ Завантажити все", callback_data="cu_download_all")],
             [InlineKeyboardButton(text="❌ Скасувати", callback_data="cu_cancel")],
@@ -182,18 +216,18 @@ async def download_all_updates(callback: CallbackQuery, bot: Bot) -> None:
             ep_list = ", ".join(str(n) for n in r["new_ep_nums"])
             await bot.send_message(
                 callback.from_user.id,
-                f"▶️ <b>{title}</b>: запущено завантаження серій {ep_list}"
+                f"▶️ <b>{title}</b> с.{r['season']}: запущено завантаження серій {ep_list}"
             )
         except Exception as e:
             logger.error(f"download_all_updates error for {title}: {e}")
             await bot.send_message(
                 callback.from_user.id,
-                f"❌ <b>{title}</b>: помилка запуску — {e}"
+                f"❌ <b>{title}</b> с.{r['season']}: помилка запуску — {e}"
             )
 
     await bot.send_message(
         callback.from_user.id,
-        f"✅ Оновлення запущено для {len(new_results)} серіал(ів)."
+        f"✅ Оновлення запущено для {len(new_results)} сезон(ів)."
     )
 
 
