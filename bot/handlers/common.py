@@ -639,7 +639,8 @@ async def cmd_menu(message: Message, state: FSMContext, bot: Bot):
             "/editContent - Редагувати\n"
             "/deleteContent - Видалити\n"
             "/broadcast - Розсилка\n"
-            "/stats - Статистика\n\n"
+            "/stats - Статистика\n"
+            "/views - Перегляди за сьогодні\n\n"
             "💡 <i>Приємної роботи!</i>"
         )
     else:
