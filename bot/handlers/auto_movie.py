@@ -572,13 +572,17 @@ async def _download_and_create_movie(
         await bot.send_message(admin_id, "📥 Отримую посилання на відео...")
         m3u8_url = await get_movie_m3u8(url, dubbing)
 
-        await bot.send_message(admin_id, "⏳ Завантажую відео (це може зайняти кілька хвилин)...")
-        was_compressed = await run_ffmpeg(m3u8_url, video_path)
+        status_msg = await bot.send_message(admin_id, "⏳ Завантажую відео (це може зайняти кілька хвилин)...")
+
+        async def on_compress_progress(pct: int):
+            try:
+                await status_msg.edit_text(f"⚙️ Перекодування відео: {pct}%...")
+            except Exception:
+                pass
+
+        was_compressed = await run_ffmpeg(m3u8_url, video_path, on_compress_progress=on_compress_progress)
         if was_compressed:
-            await bot.send_message(
-                admin_id,
-                "⚠️ Файл перевищував 1.9 ГБ — перекодовано для Telegram."
-            )
+            await bot.send_message(admin_id, "✅ Перекодування завершено!")
 
         # 3. Get metadata and thumbnail
         duration, width, height = await get_video_info(video_path)

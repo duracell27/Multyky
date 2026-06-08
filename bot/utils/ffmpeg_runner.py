@@ -2,10 +2,12 @@ import asyncio
 import json
 import math
 import os
+import re
 import shutil
 
-_TELEGRAM_SIZE_LIMIT = 1_900_000_000  # 1.9 GB — safe margin under Telegram's 2 GB cap
-_AUDIO_BITRATE_BPS = 192_000          # reserved for audio track
+_TELEGRAM_SIZE_LIMIT = 1_980_000_000
+_AUDIO_BITRATE_BPS = 192_000
+_TIME_RE = re.compile(r"out_time=(\d+):(\d+):(\d+\.\d+)")
 
 
 def format_quality(width: int, height: int) -> str:
@@ -26,10 +28,11 @@ def format_quality(width: int, height: int) -> str:
 _MIN_FREE_BYTES = 8 * 1024 ** 3  # require at least 8 GB free (faststart needs ~2× file size)
 
 
-async def run_ffmpeg(m3u8_url: str, output_path: str) -> bool:
+async def run_ffmpeg(m3u8_url: str, output_path: str, on_compress_progress=None) -> bool:
     """
     Downloads m3u8 stream and produces a faststart-enabled mp4.
-    Steps: download + faststart in one pass → compress if > 1.9 GB.
+    Steps: download + faststart in one pass → compress if > limit.
+    on_compress_progress: optional async callable(pct: int) called every ~5% during re-encode.
     Returns True if the file was re-encoded due to size, False otherwise.
     Raises RuntimeError if ffmpeg exits with non-zero code or times out.
     """
@@ -46,20 +49,18 @@ async def run_ffmpeg(m3u8_url: str, output_path: str) -> bool:
         timeout=7200,
     )
 
-    # Step 3: re-encode if file exceeds Telegram's upload limit
     if os.path.getsize(output_path) > _TELEGRAM_SIZE_LIMIT:
-        await _compress_to_limit(output_path)
+        await _compress_to_limit(output_path, on_compress_progress)
         return True
     return False
 
 
-async def _compress_to_limit(path: str) -> None:
+async def _compress_to_limit(path: str, progress_cb=None) -> None:
     """Re-encode file to fit under _TELEGRAM_SIZE_LIMIT using calculated video bitrate."""
     duration, _, _ = await get_video_info(path)
     if not duration:
         raise RuntimeError("Cannot determine video duration for compression")
 
-    # target total bitrate in bps, subtract audio
     target_video_bps = int(_TELEGRAM_SIZE_LIMIT * 8 / duration) - _AUDIO_BITRATE_BPS
     if target_video_bps <= 0:
         raise RuntimeError(
@@ -69,16 +70,56 @@ async def _compress_to_limit(path: str) -> None:
 
     compressed_path = path + ".compressed.mp4"
     try:
-        await _run_cmd(
-            [
-                "ffmpeg", "-y", "-i", path,
-                "-c:v", "libx264", "-b:v", str(target_video_bps),
-                "-c:a", "aac", "-b:a", str(_AUDIO_BITRATE_BPS),
-                "-movflags", "+faststart",
-                compressed_path,
-            ],
-            timeout=7200,
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y", "-i", path,
+            "-c:v", "libx264", "-b:v", str(target_video_bps),
+            "-c:a", "aac", "-b:a", str(_AUDIO_BITRATE_BPS),
+            "-movflags", "+faststart",
+            "-progress", "pipe:1",
+            "-nostats",
+            compressed_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
+
+        stderr_task = asyncio.create_task(proc.stderr.read())
+        last_reported = -1
+
+        try:
+            async with asyncio.timeout(7200):
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+                    if progress_cb:
+                        m = _TIME_RE.match(line.decode(errors="replace").strip())
+                        if m:
+                            elapsed = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+                            pct = min(99, int(elapsed / duration * 100))
+                            if pct >= last_reported + 5:
+                                last_reported = pct
+                                try:
+                                    await progress_cb(pct)
+                                except Exception:
+                                    pass
+                await proc.wait()
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            raise RuntimeError("ffmpeg compression timed out after 7200s")
+
+        stderr = await stderr_task
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"ffmpeg failed (code {proc.returncode}): {stderr.decode(errors='replace')[-500:]}"
+            )
+
+        if progress_cb:
+            try:
+                await progress_cb(100)
+            except Exception:
+                pass
+
         os.replace(compressed_path, path)
     finally:
         if os.path.exists(compressed_path):
