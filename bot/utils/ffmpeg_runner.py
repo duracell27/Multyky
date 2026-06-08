@@ -2,6 +2,7 @@ import asyncio
 import json
 import math
 import os
+import shutil
 
 _TELEGRAM_SIZE_LIMIT = 1_900_000_000  # 1.9 GB — safe margin under Telegram's 2 GB cap
 _AUDIO_BITRATE_BPS = 192_000          # reserved for audio track
@@ -22,30 +23,28 @@ def format_quality(width: int, height: int) -> str:
     return f"{width}×{height}"
 
 
+_MIN_FREE_BYTES = 8 * 1024 ** 3  # require at least 8 GB free (faststart needs ~2× file size)
+
+
 async def run_ffmpeg(m3u8_url: str, output_path: str) -> bool:
     """
     Downloads m3u8 stream and produces a faststart-enabled mp4.
-    Steps: download (copy) → faststart → compress if > 1.9 GB.
+    Steps: download + faststart in one pass → compress if > 1.9 GB.
     Returns True if the file was re-encoded due to size, False otherwise.
     Raises RuntimeError if ffmpeg exits with non-zero code or times out.
     """
-    raw_path = output_path + ".raw.mp4"
-
-    try:
-        # Step 1: download from m3u8
-        await _run_cmd(
-            ["ffmpeg", "-y", "-i", m3u8_url, "-c", "copy", raw_path],
-            timeout=7200,
+    free = shutil.disk_usage(os.path.dirname(output_path) or "/tmp").free
+    if free < _MIN_FREE_BYTES:
+        raise RuntimeError(
+            f"Недостатньо місця на диску: {free // 1024**3} ГБ вільно, "
+            f"потрібно мінімум {_MIN_FREE_BYTES // 1024**3} ГБ "
+            f"(faststart потребує ~2× розмір файлу)"
         )
 
-        # Step 2: apply faststart (moves moov atom to front for instant playback)
-        await _run_cmd(
-            ["ffmpeg", "-y", "-i", raw_path, "-c", "copy", "-movflags", "+faststart", output_path],
-            timeout=600,
-        )
-    finally:
-        if os.path.exists(raw_path):
-            os.remove(raw_path)
+    await _run_cmd(
+        ["ffmpeg", "-y", "-i", m3u8_url, "-c", "copy", "-movflags", "+faststart", output_path],
+        timeout=7200,
+    )
 
     # Step 3: re-encode if file exceeds Telegram's upload limit
     if os.path.getsize(output_path) > _TELEGRAM_SIZE_LIMIT:
