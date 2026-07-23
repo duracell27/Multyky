@@ -21,7 +21,7 @@ from urllib.parse import urlparse, parse_qs
 
 logger = logging.getLogger(__name__)
 
-import requests
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 
 _HEADERS = {
@@ -54,9 +54,9 @@ def _fetch(url: str, *, method: str = "GET", data: Optional[dict] = None,
     if method == "POST":
         headers["X-Requested-With"] = "XMLHttpRequest"
         headers["Accept"] = "application/json, text/javascript, */*; q=0.01"
-        resp = requests.post(url, headers=headers, data=data, timeout=30)
+        resp = requests.post(url, headers=headers, data=data, timeout=30, impersonate="chrome120")
     else:
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = requests.get(url, headers=headers, timeout=30, impersonate="chrome120")
     resp.raise_for_status()
     return resp
 
