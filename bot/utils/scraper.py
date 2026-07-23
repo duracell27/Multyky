@@ -48,17 +48,31 @@ def _make_absolute(url: str) -> str:
 
 def _fetch(url: str, *, method: str = "GET", data: Optional[dict] = None,
            referer: Optional[str] = None) -> requests.Response:
+    import time, random
     headers = dict(_HEADERS)
     if referer:
         headers["Referer"] = referer
-    if method == "POST":
-        headers["X-Requested-With"] = "XMLHttpRequest"
-        headers["Accept"] = "application/json, text/javascript, */*; q=0.01"
-        resp = requests.post(url, headers=headers, data=data, timeout=30, impersonate="chrome120")
-    else:
-        resp = requests.get(url, headers=headers, timeout=30, impersonate="chrome120")
-    resp.raise_for_status()
-    return resp
+
+    for attempt in range(4):
+        if method == "POST":
+            headers["X-Requested-With"] = "XMLHttpRequest"
+            headers["Accept"] = "application/json, text/javascript, */*; q=0.01"
+            resp = requests.post(url, headers=headers, data=data, timeout=30, impersonate="chrome120")
+        else:
+            resp = requests.get(url, headers=headers, timeout=30, impersonate="chrome120")
+
+        if resp.status_code == 429:
+            if attempt == 3:
+                resp.raise_for_status()
+            wait = 10 * (attempt + 1) + random.uniform(0, 5)
+            logger.warning(f"Rate limited (429) on {url}, retrying in {wait:.1f}s (attempt {attempt + 1}/3)")
+            time.sleep(wait)
+            continue
+
+        resp.raise_for_status()
+        return resp
+
+    return resp  # unreachable but satisfies type checker
 
 
 def _get_playlist_html(page_url: str) -> str:

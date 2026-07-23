@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from collections import defaultdict
@@ -43,7 +44,9 @@ async def _collect_missing_episodes(series: dict) -> list[dict]:
             if not season_urls:
                 return [{"series": series, "season": 0, "new_ep_nums": [], "new_ep_urls": [], "error": "Не знайдено сезонів на сайті"}]
 
-            for site_season, check_url in sorted(season_urls.items()):
+            for i, (site_season, check_url) in enumerate(sorted(season_urls.items())):
+                if i > 0:
+                    await asyncio.sleep(2)
                 try:
                     dubbings = await get_dubbing_options(check_url)
                     dubbing = dubbings[0] if dubbings else source_dubbing
@@ -77,6 +80,8 @@ async def _collect_missing_episodes(series: dict) -> list[dict]:
             max_db_season = max((int(s) for s in seasons.keys()), default=0)
             # Check from season 1 up to max_db_season+1 to catch both gaps and new seasons
             for season_num in range(1, max_db_season + 2):
+                if season_num > 1:
+                    await asyncio.sleep(2)
                 try:
                     dubbings = await get_dubbing_options(source_url, season=season_num)
                     dubbing = dubbings[0] if dubbings else source_dubbing
