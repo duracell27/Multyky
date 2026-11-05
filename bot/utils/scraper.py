@@ -648,11 +648,10 @@ def _sync_parse_uafix_series_page(url: str, season: int, dubbing: str) -> dict:
 
     # Normalize URL to point to the requested season.
     # source_url in DB may store sezon-1/ — replace with the correct season number.
-    normalized = re.sub(r"/sezon-\d+/", f"/sezon-{season}/", url, flags=re.I)
-    if normalized == url:
-        # URL has no sezon-N segment — append it
-        normalized = url.rstrip("/").split("?")[0].rstrip("/") + f"/sezon-{season}/"
-    url = normalized
+    if re.search(r"/sezon-\d+/", url, flags=re.I):
+        url = re.sub(r"/sezon-\d+/", f"/sezon-{season}/", url, flags=re.I)
+    else:
+        url = url.rstrip("/").split("?")[0].rstrip("/") + f"/sezon-{season}/"
 
     base_url = url.rstrip("/").split("?")[0]
     resp = _fetch(url)
