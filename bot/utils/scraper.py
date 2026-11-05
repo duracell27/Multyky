@@ -338,15 +338,17 @@ def _sync_get_m3u8_url(episode_url: str, dubbing: Optional[str] = None) -> str:
     """
     Fetch an episode player page and extract the HLS m3u8 URL.
 
-    Handles two URL types:
-      • ashdi.vip/serial/<id>?season=N&episode=M  — uafix.net series; dubbing required
-      • ashdi.vip/vod/<id>                        — uakino.best; dubbing ignored
+    Handles these URL types:
+      • ashdi.vip/serial/<id>?season=N&episode=M  — uafix.net series (ashdi player); dubbing required
+      • ashdi.vip/vod/<id>                        — uakino.best or uafix.net movie; dubbing ignored
+      • zetvideo.net/vod/<id>                     — uafix.net series (zetvideo player); dubbing ignored
     Resolves master playlists to the highest-bandwidth variant.
     """
     if "ashdi.vip/serial/" in episode_url:
         return _sync_get_ashdi_serial_m3u8(episode_url, dubbing)
 
-    resp = _fetch(episode_url, referer="https://uakino.best/")
+    referer = "https://uafix.net/" if "zetvideo.net" in episode_url else "https://uakino.best/"
+    resp = _fetch(episode_url, referer=referer)
     text = resp.text
 
     m3u8_match = re.search(
@@ -504,11 +506,11 @@ def _sync_parse_uafix_movie_page(url: str) -> dict:
     Parse a uafix.net page (movie or series) and return metadata.
     uafix.net uses a different HTML template than uakino.best:
       - title:    <h1> text, part before first " / "
-      - title_en: <span class="eng-rus" itemprop="alternativeHeadline">
-      - year:     <span itemprop="dateCreated" class="year">
+      - title_en: <meta itemprop="itemReviewed"> content, Latin segment after " / "
+      - year:     <span class="year"> (no itemprop on this site)
       - imdb:     <span class="rat-imdb">
-      - poster:   <img class="gogo-online" src="...">
-    uafix movies have a single stream, so dubbings=["UA"].
+      - poster:   <meta property="og:image">
+    uafix content has a single stream, so dubbings=["UA"].
     """
     resp = _fetch(url)
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -520,21 +522,36 @@ def _sync_parse_uafix_movie_page(url: str) -> dict:
         raw = h1.get_text(strip=True)
         title = raw.split(" / ")[0].strip() or raw
 
-    # English / original title
+    # English / original title — from meta itemReviewed (most reliable on uafix)
+    # Content example: "Укр назва / Укр назва 2 / English Title"
     title_en = None
-    eng = soup.find("span", class_="eng-rus")
-    if not eng:
-        eng = soup.find(itemprop="alternativeHeadline")
-    if eng:
-        title_en = eng.get_text(strip=True)
+    meta_reviewed = soup.find("meta", itemprop="itemReviewed")
+    if meta_reviewed:
+        content = meta_reviewed.get("content", "")
+        parts = [p.strip() for p in content.split(" / ")]
+        latin_parts = [p for p in parts if re.search(r"[a-zA-Z]", p)]
+        if latin_parts:
+            title_en = latin_parts[-1]
+    if not title_en:
+        # Fallback: eng-rus span or alternativeHeadline
+        eng = soup.find("span", class_="eng-rus") or soup.find(itemprop="alternativeHeadline")
+        if eng:
+            title_en = eng.get_text(strip=True) or None
 
-    # Year
+    # Year — <span class="year"> has no itemprop on this site
     year = None
-    year_span = soup.find("span", itemprop="dateCreated", class_="year")
+    year_span = soup.find("span", class_="year")
     if year_span:
         m = re.search(r"\d{4}", year_span.get_text(strip=True))
         if m:
             year = int(m.group(0))
+    if not year:
+        # Fallback: year in parentheses in <title>
+        title_tag = soup.find("title")
+        if title_tag:
+            m = re.search(r"\((\d{4})\)", title_tag.get_text())
+            if m:
+                year = int(m.group(1))
 
     # IMDB rating
     imdb = None
@@ -547,13 +564,20 @@ def _sync_parse_uafix_movie_page(url: str) -> dict:
             except ValueError:
                 pass
 
-    # Poster — prefer data-src (lazy-loaded) over src
+    # Poster — og:image gives a full ready-to-use URL
     poster_url = None
-    poster_img = soup.find("img", class_="gogo-online")
-    if poster_img:
-        src = poster_img.get("data-src") or poster_img.get("src")
-        if src:
-            poster_url = src if src.startswith("http") else "https://uafix.net" + src
+    og_image = soup.find("meta", property="og:image")
+    if og_image:
+        poster_url = og_image.get("content") or None
+    if not poster_url:
+        # Fallback: gogo-online img or first lazy img with data-src
+        poster_img = soup.find("img", class_="gogo-online")
+        if not poster_img:
+            poster_img = soup.find("img", class_="lazy", attrs={"data-src": True})
+        if poster_img:
+            src = poster_img.get("data-src") or poster_img.get("src")
+            if src:
+                poster_url = src if src.startswith("http") else "https://uafix.net" + src
 
     return {
         "title": title,
@@ -568,26 +592,30 @@ def _sync_parse_uafix_movie_page(url: str) -> dict:
 def _sync_get_uafix_movie_m3u8(url: str) -> str:
     """
     Get m3u8 URL for a uafix.net movie.
-    Flow: movie page → zetvideo.net iframe → Playerjs file → m3u8.
+    Tries zetvideo.net first, falls back to ashdi.vip/vod/.
     """
     resp = _fetch(url)
     soup = BeautifulSoup(resp.text, "html.parser")
 
+    # ── zetvideo.net player ───────────────────────────────────────────────────
     iframe = soup.find("iframe", src=re.compile(r"zetvideo\.net", re.I))
-    if not iframe:
-        raise ValueError(f"No zetvideo.net iframe found on uafix movie page: {url}")
+    if iframe:
+        player_url = _make_absolute(iframe["src"])
+        resp2 = _fetch(player_url, referer=url)
+        m3u8_match = re.search(
+            r"""file\s*:\s*['"]((https?:)?//[^'"]+\.m3u8)['"]""",
+            resp2.text,
+        )
+        if not m3u8_match:
+            raise ValueError(f"No m3u8 URL found on zetvideo page: {player_url}")
+        return _resolve_best_quality_m3u8(_make_absolute(m3u8_match.group(1)))
 
-    zetvideo_url = _make_absolute(iframe["src"])
-    resp2 = _fetch(zetvideo_url, referer=url)
+    # ── ashdi.vip/vod/ player (fallback) ─────────────────────────────────────
+    iframe = soup.find("iframe", src=re.compile(r"ashdi\.vip/vod/", re.I))
+    if iframe:
+        return _sync_get_m3u8_url(_make_absolute(iframe["src"]))
 
-    m3u8_match = re.search(
-        r"""file\s*:\s*['"]((https?:)?//[^'"]+\.m3u8)['"]""",
-        resp2.text,
-    )
-    if not m3u8_match:
-        raise ValueError(f"No m3u8 URL found on zetvideo page: {zetvideo_url}")
-
-    return _resolve_best_quality_m3u8(_make_absolute(m3u8_match.group(1)))
+    raise ValueError(f"No zetvideo.net or ashdi.vip/vod/ iframe found on uafix movie page: {url}")
 
 
 def _sync_parse_uafix_series_page(url: str, season: int, dubbing: str) -> dict:
@@ -596,11 +624,13 @@ def _sync_parse_uafix_series_page(url: str, season: int, dubbing: str) -> dict:
 
     When dubbing == "":
       Returns {"dubbings": [...], "episode_urls": [], "episode_numbers": []}.
-      Fetches the first episode of `season` to read available dubbings from ashdi JSON.
+      Checks the first episode page to detect player type and available dubbings.
 
     When dubbing != "":
-      Returns {"dubbings": [], "episode_urls": [...ashdi serial URLs...], "episode_numbers": [...]}.
-      episode_urls are ashdi.vip/serial/<id>?season=N&episode=M for each episode.
+      Returns {"dubbings": [], "episode_urls": [...], "episode_numbers": [...]}.
+      Supports two player types detected from the first episode page:
+        • ashdi.vip/serial/ — episode_urls are ashdi.vip/serial/<id>?season=N&episode=M
+        • zetvideo.net/vod/ — episode_urls are per-episode zetvideo.net/vod/<id> (fetched individually)
     """
     resp = _fetch(url)
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -622,37 +652,73 @@ def _sync_parse_uafix_series_page(url: str, season: int, dubbing: str) -> dict:
 
     sorted_eps = sorted(seen_eps.items())  # [(ep_num, page_url), ...]
 
-    # Fetch the first episode page to get the ashdi serial ID
+    # Fetch the first episode page to determine player type
     first_ep_page = sorted_eps[0][1]
     resp2 = _fetch(first_ep_page)
     soup2 = BeautifulSoup(resp2.text, "html.parser")
-    iframe = soup2.find("iframe", src=re.compile(r"ashdi\.vip/serial/", re.I))
-    if not iframe:
-        raise ValueError(f"No ashdi serial iframe on episode page: {first_ep_page}")
 
-    ashdi_src = _make_absolute(iframe["src"])
-    sid_match = re.search(r"ashdi\.vip/serial/(\d+)", ashdi_src)
-    if not sid_match:
-        raise ValueError(f"Cannot extract serial ID from: {ashdi_src}")
-    serial_id = sid_match.group(1)
+    # ── ashdi.vip/serial/ player ──────────────────────────────────────────────
+    ashdi_iframe = soup2.find("iframe", src=re.compile(r"ashdi\.vip/serial/", re.I))
+    if ashdi_iframe:
+        ashdi_src = _make_absolute(ashdi_iframe["src"])
+        sid_match = re.search(r"ashdi\.vip/serial/(\d+)", ashdi_src)
+        if not sid_match:
+            raise ValueError(f"Cannot extract serial ID from: {ashdi_src}")
+        serial_id = sid_match.group(1)
 
-    episode_numbers = [ep_num for ep_num, _ in sorted_eps]
+        episode_numbers = [ep_num for ep_num, _ in sorted_eps]
 
-    if not dubbing:
-        first_ashdi = f"https://ashdi.vip/serial/{serial_id}?season={season}&episode={episode_numbers[0]}"
-        resp3 = _fetch(first_ashdi, referer=url)
-        json_match = re.search(r"file\s*:\s*'(\[.*?\])'", resp3.text, re.DOTALL)
-        if not json_match:
-            raise ValueError(f"No Playerjs JSON on ashdi serial page: {first_ashdi}")
-        data = json.loads(json_match.group(1))
-        dubbings = [d.get("title", "").strip() for d in data if d.get("title", "").strip()]
-        return {"dubbings": dubbings, "episode_urls": [], "episode_numbers": []}
+        if not dubbing:
+            first_ashdi = f"https://ashdi.vip/serial/{serial_id}?season={season}&episode={episode_numbers[0]}"
+            resp3 = _fetch(first_ashdi, referer=url)
+            json_match = re.search(r"file\s*:\s*'(\[.*?\])'", resp3.text, re.DOTALL)
+            if not json_match:
+                raise ValueError(f"No Playerjs JSON on ashdi serial page: {first_ashdi}")
+            data = json.loads(json_match.group(1))
+            dubbings = [d.get("title", "").strip() for d in data if d.get("title", "").strip()]
+            return {"dubbings": dubbings, "episode_urls": [], "episode_numbers": []}
 
-    episode_urls = [
-        f"https://ashdi.vip/serial/{serial_id}?season={season}&episode={ep_num}"
-        for ep_num in episode_numbers
-    ]
-    return {"dubbings": [], "episode_urls": episode_urls, "episode_numbers": episode_numbers}
+        episode_urls = [
+            f"https://ashdi.vip/serial/{serial_id}?season={season}&episode={ep_num}"
+            for ep_num in episode_numbers
+        ]
+        return {"dubbings": [], "episode_urls": episode_urls, "episode_numbers": episode_numbers}
+
+    # ── zetvideo.net/vod/ player ──────────────────────────────────────────────
+    zetvideo_iframe = soup2.find("iframe", src=re.compile(r"zetvideo\.net/vod/", re.I))
+    if zetvideo_iframe:
+        if not dubbing:
+            return {"dubbings": ["UA"], "episode_urls": [], "episode_numbers": []}
+
+        # Collect zetvideo URLs for each episode by fetching its page
+        episode_numbers = [ep_num for ep_num, _ in sorted_eps]
+        zetvideo_map: dict[int, str] = {sorted_eps[0][0]: _make_absolute(zetvideo_iframe["src"])}
+
+        for ep_num, ep_page in sorted_eps[1:]:
+            try:
+                resp_ep = _fetch(ep_page)
+                soup_ep = BeautifulSoup(resp_ep.text, "html.parser")
+                iframe_ep = soup_ep.find("iframe", src=re.compile(r"zetvideo\.net/vod/", re.I))
+                if iframe_ep:
+                    zetvideo_map[ep_num] = _make_absolute(iframe_ep["src"])
+                else:
+                    logger.warning(f"No zetvideo iframe on {ep_page}, skipping episode {ep_num}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch {ep_page}: {e}")
+
+        valid_eps = [(n, zetvideo_map[n]) for n in episode_numbers if n in zetvideo_map]
+        if not valid_eps:
+            raise ValueError(f"No zetvideo URLs found for season {season} on: {url}")
+
+        return {
+            "dubbings": [],
+            "episode_urls": [u for _, u in valid_eps],
+            "episode_numbers": [n for n, _ in valid_eps],
+        }
+
+    raise ValueError(
+        f"No ashdi.vip/serial/ or zetvideo.net/vod/ iframe found on episode page: {first_ep_page}"
+    )
 
 
 def _sync_get_movie_m3u8(url: str, dubbing: str) -> str:
