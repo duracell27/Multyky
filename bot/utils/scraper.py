@@ -632,20 +632,45 @@ def _sync_parse_uafix_series_page(url: str, season: int, dubbing: str) -> dict:
         • ashdi.vip/serial/ — episode_urls are ashdi.vip/serial/<id>?season=N&episode=M
         • zetvideo.net/vod/ — episode_urls are per-episode zetvideo.net/vod/<id> (fetched individually)
     """
-    resp = _fetch(url)
-    soup = BeautifulSoup(resp.text, "html.parser")
-
     season_pat = re.compile(r"season-(\d+)-episode-(\d+)", re.I)
     seen_eps: dict[int, str] = {}
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if not href.startswith("http"):
-            href = "https://uafix.net" + href if href.startswith("/") else href
-        m = season_pat.search(href)
-        if m and int(m.group(1)) == season:
-            ep_num = int(m.group(2))
-            if ep_num not in seen_eps:
-                seen_eps[ep_num] = href
+
+    def _collect_episodes_from_soup(s: BeautifulSoup) -> None:
+        for a in s.find_all("a", href=True):
+            href = a["href"]
+            if not href.startswith("http"):
+                href = "https://uafix.net" + href if href.startswith("/") else href
+            m = season_pat.search(href)
+            if m and int(m.group(1)) == season:
+                ep_num = int(m.group(2))
+                if ep_num not in seen_eps:
+                    seen_eps[ep_num] = href
+
+    # Normalize URL to point to the requested season.
+    # source_url in DB may store sezon-1/ — replace with the correct season number.
+    normalized = re.sub(r"/sezon-\d+/", f"/sezon-{season}/", url, flags=re.I)
+    if normalized == url:
+        # URL has no sezon-N segment — append it
+        normalized = url.rstrip("/").split("?")[0].rstrip("/") + f"/sezon-{season}/"
+    url = normalized
+
+    base_url = url.rstrip("/").split("?")[0]
+    resp = _fetch(url)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    _collect_episodes_from_soup(soup)
+
+    # Collect page numbers from pagination and fetch remaining pages
+    pagination = soup.find("ul", class_="pagination")
+    if pagination:
+        page_nums: set[int] = set()
+        for a in pagination.find_all("a", href=True):
+            pm = re.search(r"[?&]page=(\d+)", a["href"])
+            if pm:
+                page_nums.add(int(pm.group(1)))
+        for page_num in sorted(page_nums):
+            page_resp = _fetch(f"{base_url}/?page={page_num}")
+            page_soup = BeautifulSoup(page_resp.text, "html.parser")
+            _collect_episodes_from_soup(page_soup)
 
     if not seen_eps:
         raise ValueError(f"No episodes found for season {season} on page: {url}")

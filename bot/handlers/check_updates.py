@@ -44,7 +44,16 @@ async def _collect_missing_episodes(series: dict) -> list[dict]:
             if not season_urls:
                 return [{"series": series, "season": 0, "new_ep_nums": [], "new_ep_urls": [], "error": "Не знайдено сезонів на сайті"}]
 
-            for i, (site_season, check_url) in enumerate(sorted(season_urls.items())):
+            max_db_season = max((int(s) for s in seasons.keys()), default=0)
+            # Only check the last season in DB and the next one (new season start)
+            relevant_seasons = {
+                sn: url for sn, url in season_urls.items()
+                if sn >= max(1, max_db_season) and sn <= max_db_season + 1
+            }
+            if not relevant_seasons:
+                relevant_seasons = {max(season_urls): season_urls[max(season_urls)]}
+
+            for i, (site_season, check_url) in enumerate(sorted(relevant_seasons.items())):
                 if i > 0:
                     await asyncio.sleep(2)
                 try:
@@ -78,8 +87,8 @@ async def _collect_missing_episodes(series: dict) -> list[dict]:
 
         else:  # uafix
             max_db_season = max((int(s) for s in seasons.keys()), default=0)
-            # Check from season 1 up to max_db_season+1 to catch both gaps and new seasons
-            for season_num in range(1, max_db_season + 2):
+            # Only check the last season in DB and the next one (new season start)
+            for season_num in range(max(1, max_db_season), max_db_season + 2):
                 if season_num > 1:
                     await asyncio.sleep(2)
                 try:
