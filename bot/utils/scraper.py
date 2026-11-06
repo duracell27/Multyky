@@ -49,6 +49,7 @@ def _make_absolute(url: str) -> str:
 def _fetch(url: str, *, method: str = "GET", data: Optional[dict] = None,
            referer: Optional[str] = None) -> requests.Response:
     import time, random
+    from urllib.parse import urlparse
     headers = dict(_HEADERS)
     if referer:
         headers["Referer"] = referer
@@ -57,6 +58,9 @@ def _fetch(url: str, *, method: str = "GET", data: Optional[dict] = None,
         if method == "POST":
             headers["X-Requested-With"] = "XMLHttpRequest"
             headers["Accept"] = "application/json, text/javascript, */*; q=0.01"
+            # Origin is required by uakino.best AJAX endpoints to pass CSRF check
+            parsed = urlparse(referer or url)
+            headers["Origin"] = f"{parsed.scheme}://{parsed.netloc}"
             resp = requests.post(url, headers=headers, data=data, timeout=30, impersonate="chrome120")
         else:
             resp = requests.get(url, headers=headers, timeout=30, impersonate="chrome120")
